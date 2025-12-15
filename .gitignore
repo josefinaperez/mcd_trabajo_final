@@ -208,6 +208,7 @@ __marimo__/
 
 # Data
 data/raw/
+*.csv
 
 # .DS_Store
 *.DS_Store
