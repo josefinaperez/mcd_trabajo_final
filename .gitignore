@@ -207,8 +207,7 @@ marimo/_lsp/
 __marimo__/
 
 # Data
-data/raw/**
-*.csv
+data/raw/
 
 # .DS_Store
 *.DS_Store
