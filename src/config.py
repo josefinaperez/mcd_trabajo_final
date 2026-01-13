@@ -1,7 +1,5 @@
 import os
 
-MAX_POSITIONAL_ACCURACY = 5000
-MIN_DATE = "1950-01-01"
 ARG_SHP_PATH = "../data/shp/argentina/argentina.shp"
 STA_FE_SHP_PATH = "../data/shp/santa_fe/santa_fe.shp"
 
