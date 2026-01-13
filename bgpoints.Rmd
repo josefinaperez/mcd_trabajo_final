@@ -1,0 +1,86 @@
+---
+title: "background_points"
+output: html_document
+date: "2026-01-08"
+---
+```{r}
+
+```
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(readr)
+library(sp)
+
+```
+
+
+## R Markdown
+
+
+```{r}
+df_santa_fe <- read_csv("data/filtered/df_trametes_sanguinea_santa_fe.csv")
+```
+```{r}
+library(terra)
+bio1 <- rast("data/features/worldclim/wc2.1_30s_bio/wc2.1_30s_bio_1.tif")
+shp_sta_fe <- vect("data/shp/santa_fe/santa_fe.shp")
+shp_sta_fe <- project(shp_sta_fe, crs(bio1))
+bio1_sta_fe <- crop(bio1, shp_sta_fe)
+bio_1_sta_fe <- mask(bio1_sta_fe, shp_sta_fe)
+set.seed(1963)
+bg <- spatSample(
+  bio_1_sta_fe,
+  size = 125,
+  method = "random",
+  na.rm = TRUE,
+  xy = TRUE)
+```
+
+
+```{r}
+library(ggplot2)
+library(sf)
+class(df_santa_fe)
+
+occ_df <- data.frame(
+  lon = df_santa_fe$decimalLongitude,
+  lat = df_santa_fe$decimalLatitude,
+  type = "Presencia"
+)
+
+bg_df <- data.frame(
+  lon = bg[,1],
+  lat = bg[,2],
+  type = "Background"
+)
+
+pts <- rbind(occ_df, bg_df)
+
+write.csv(pts, "data/df_trametes_sanguinea_bg.csv", row.names = TRUE)
+
+ggplot() +
+  geom_sf(data = st_as_sf(shp_sta_fe), fill = NA, color = "grey50") +
+  geom_point(
+    data = pts,
+    aes(x = lon, y = lat, color = type),
+    size = 1,
+    alpha = 0.6
+  ) +
+  scale_color_manual(
+    values = c("Presencia" = "red", "Background" = "blue")
+  ) +
+  coord_sf() +
+  theme_minimal() +
+  labs(
+    color = "",
+    x = "Longitud",
+    y = "Latitud"
+  )
+```
+
+
+

@@ -4,10 +4,12 @@ import pandas as pd
 from rasterio.mask import mask
 import rasterio
 
-def plot_points(shape_path, df_path):
+def plot_points(shape_path, df=None, df_path=None):
     shape = gpd.read_file(shape_path)
     shape = shape.to_crs("EPSG:4326")
-    df = pd.read_csv(df_path)
+    
+    if df is None and df_path is not None:
+        df = pd.read_csv(df_path)
     
     gdf_points = gpd.GeoDataFrame(
         df,
