@@ -27,7 +27,7 @@ generate_background_points <- function(shp_path,
     method = bg_points_method,
     na.rm = TRUE,
     xy = TRUE) |>
-    select("x", "y")
+    dplyr::select(x, y)
   
   return(bg)
 }
@@ -41,7 +41,7 @@ extract_values <- function(path_rasters,
   
   # Extraer valores del raster
   values <- extract(predictors, df_points) |>
-            select(-ID)
+            dplyr::select(-ID)
           
   return(values)
 }
@@ -66,7 +66,7 @@ generate_sdm_data <- function(shp_path,
                  st_transform(st_crs(shp)) |>
                  filter(st_within(geometry, shp, sparse = FALSE)) |>
                  st_drop_geometry() |>
-                 select("x", "y")
+                 dplyr::select(x, y)
   
   
   # Background points
@@ -94,9 +94,5 @@ generate_sdm_data <- function(shp_path,
   return(sdm_data)
 }
 
-
-
-# probar todo esto
-# objetivo tener file sdm data para arg y sta fe
 
 

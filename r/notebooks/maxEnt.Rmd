@@ -1,0 +1,70 @@
+---
+title: "MaxEnt"
+output:
+  pdf_document: default
+  html_document: default
+date: "2026-01-15"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+source("../src/plot.R")
+source("../src/utils.R")
+```
+
+```{r}
+library(readr)
+library(ggplot2)
+library(terra)
+```
+
+```{r setup, include=FALSE}
+# SHP de Santa Fe
+shp_sf_path <- "../../data/shp/santa_fe/santa_fe.shp"
+shp_sf <- create_shp_from(shp_sf_path)
+
+# Dataset de ocurrencias
+df_ocurrences_path <- "../../data/ocurrences/processed/df_trametes_sanguinea.csv"
+df_ocurrences  <- read_csv(df_ocurrences_path)
+
+df_ocurrences_sf <- filter_points(shp_sf, 
+              df_ocurrences,
+              lon_col = 'decimalLongitude',
+              lat_col = 'decimalLatitude')
+```
+
+
+# POC
+
+## Datos
+
+### Ocurrencias
+
+Puntos de ocurrencias de la especie Trametes Sanguinea en la provincia de Santa Fe. Fuente: GBIF.
+
+
+```{r}
+ggplot() +
+  layer_shp(shp_sf) +
+  layer_points(df_ocurrences_sf,
+               crs = st_crs(shp_sf),
+               x = 'decimalLongitude',
+               y = 'decimalLatitude',
+               color = "blue",
+               size = 1) +
+  coord_sf() +
+  theme_minimal()
+```
+
+### Variables ambientales
+
+Bio variables de WorldClim, resolución 30s.
+
+```{r}
+wc2.1_30s_bio_path <- "../../data/features/worldclim/wc2.1_30s_bio"
+files <- list.files(wc2.1_30s_bio_path, full.names=TRUE)
+predictors <- rast(files)
+plot(predictors)
+```
+## Modelado
+
