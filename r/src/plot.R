@@ -79,3 +79,20 @@ plot_shp_points <- function(
     ggplot2::coord_sf() +
     ggplot2::theme_minimal()
 }
+
+
+plot_points_in_map <- function(df, shp_path) {
+  
+  shp <- create_shp_from(shp_path)
+  
+  ggplot() +
+    layer_shp(shp) +
+    layer_points(df,
+                 crs = st_crs(shp),
+                 x = 'decimalLongitude',
+                 y = 'decimalLatitude',
+                 color = "blue",
+                 size = 1) +
+    coord_sf() +
+    theme_minimal()
+}

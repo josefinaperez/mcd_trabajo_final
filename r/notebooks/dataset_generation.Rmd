@@ -1,0 +1,67 @@
+---
+title: "dataset_generation"
+output: html_document
+date: "2026-02-24"
+---
+
+```{r setup, include=FALSE, warning=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+```{r}
+library(ggplot2)
+source("../src/preprocessing.R")
+source("../src/plot.R")
+```
+
+## Dataset generation pipeline
+
+```{r}
+df_trametes_sanguinea <- read_csv("../../data/ocurrences/raw/df_trametes_sanguinea.csv")
+plot_points_in_map(df_trametes_sanguinea, "../../data/shp/argentina/argentina.shp")
+```
+
+
+### Preprocesamiento
+
+#### Filtros de calidad
+
+
+```{r, warning=FALSE}
+  df_path <- "../../data/ocurrences/raw/df_trametes_sanguinea.csv"
+  preproc_path <- "../../data/ocurrences/processed/df_trametes_sanguinea.csv"
+  min_year <- 1945
+  scientific_name <- 'Polyporaceae'
+  max_uncertainty_km <- 10
+  shp_path <- "../../data/shp/argentina/argentina.shp"
+  tests <- c(#"capitals",
+              #"centroids",
+              "equal",
+              "gbif",
+              #"institutions",
+              "outliers",
+              #"seas",
+              "zeros")
+  
+  preproc <- preprocess_dataset(df_path,
+                                preproc_path,
+                                min_year,
+                                scientific_name,
+                                max_uncertainty_km,
+                                shp_path,
+                                tests)
+  
+  df_clean <- preproc$df_clean
+  df_flagged <- preproc$df_flagged
+  
+  plot_points_in_map(df_clean, shp_path)
+```
+
+Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
+
+
+
+
+```{r}
+```
