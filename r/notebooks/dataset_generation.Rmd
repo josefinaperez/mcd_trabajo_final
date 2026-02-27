@@ -13,6 +13,10 @@ knitr::opts_chunk$set(echo = TRUE)
 library(ggplot2)
 source("../src/preprocessing.R")
 source("../src/plot.R")
+source("../src/grid_thinning.R")
+```
+```{r}
+shp_path <- "../../data/shp/argentina/argentina.shp"
 ```
 
 ## Dataset generation pipeline
@@ -34,15 +38,17 @@ plot_points_in_map(df_trametes_sanguinea, "../../data/shp/argentina/argentina.sh
   min_year <- 1945
   scientific_name <- 'Polyporaceae'
   max_uncertainty_km <- 10
-  shp_path <- "../../data/shp/argentina/argentina.shp"
   tests <- c(#"capitals",
               #"centroids",
               "equal",
-              "gbif",
+              "duplicates",
+              #"gbif",
               #"institutions",
               "outliers",
               #"seas",
-              "zeros")
+              "zeros"
+              #"urban"
+              )
   
   preproc <- preprocess_dataset(df_path,
                                 preproc_path,
@@ -60,8 +66,22 @@ plot_points_in_map(df_trametes_sanguinea, "../../data/shp/argentina/argentina.sh
 
 Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
 
-
-
-
 ```{r}
+
+out_dir. <- "../../data/ocurrences/processed"
+
+res <- grid_thin_gbif(
+  df = df_clean,
+  grid_sizes_km = c(10, 25, 50),
+  out_dir = "outputs/thinning",
+  prefix = "trametes_sanguinea",
+  seed = 42
+)
+
+res$summary
 ```
+```{r}
+plot_points_in_map(res$thinned_df$grid_10km, shp_path)
+
+```
+
