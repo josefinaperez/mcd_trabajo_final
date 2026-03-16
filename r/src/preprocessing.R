@@ -66,7 +66,7 @@ preprocess_dataset <- function(df_path,
   
   df_clean <- df_clean[flags$.summary,]
   
-  write.csv(df_clean, preproc_path)
+  readr::write_csv(df_clean, preproc_path)
   
   return(list(df_clean = df_clean,
        df_flagged = df_flagged))
