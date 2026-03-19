@@ -1,7 +1,7 @@
 library(readr)
 library(CoordinateCleaner)
 library(dplyr)
-source("../src/utils.R")
+source("r/src/utils.R")
 
 
 preprocess_dataset <- function(df_path,
