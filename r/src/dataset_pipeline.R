@@ -13,7 +13,7 @@ env_sets <- list(
   )
 )
 
-fixed_bp_n <- 2000L
+fixed_bp_n <- 10000L
 
 config_table <- make_config_table(
   species_table = species_table,
@@ -21,7 +21,7 @@ config_table <- make_config_table(
   bp_n_strategies = c("fixed", "match_presence"),
   fixed_bp_n = fixed_bp_n,
   env_sets = c("bioclim_30s"),
-  grid_sizes_km = c(50)
+  grid_sizes_km = c(10, 50)
 )
 
 manifest <- build_parallel_sdm_datasets(

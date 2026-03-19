@@ -84,4 +84,7 @@ res$summary
 plot_points_in_map(res$thinned_df$grid_10km, shp_path)
 
 ```
+```{r}
+plot_points_in_map(sdm_10000)
+```
 

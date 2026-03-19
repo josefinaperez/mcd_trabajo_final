@@ -1,0 +1,125 @@
+---
+title: "points_visualization"
+output: html_document
+date: "2026-03-18"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+
+```{r}
+source("../src/plot.R")
+```
+
+```{r plot-all-datasets, echo=FALSE, results='asis'}
+# Cargar librerías necesarias
+library(ggplot2)
+library(readr)
+library(purrr)
+library(stringr)
+
+# Ruta a la carpeta de outputs
+output_dir <- "../../data/outputs/sdm_parallel"
+
+# Listar todos los archivos de dataset model-ready
+dataset_files <- list.files(path = output_dir, pattern = "sdm_dataset_model_ready.csv", full.names = TRUE, recursive = TRUE)
+
+# Iterar sobre cada archivo y generar el gráfico
+walk(dataset_files, function(file_path) {
+  
+  # Leer el dataset
+  df <- read_csv(file_path, show_col_types = FALSE)
+  
+  # Extraer el nombre del archivo para obtener los parámetros
+  run_id <- basename(dirname(file_path))
+  
+  # Mostrar el título con los parámetros
+  cat("\n\n### Parámetros del dataset: `", run_id, "`\n\n")
+  
+  # Mostrar el gráfico
+  print(plot_points_in_map(df, color_by_class = TRUE))
+})
+```
+```{r plot-all-datasets, echo=FALSE, warning=FALSE, message=FALSE, fig.width=8, fig.height=6}
+library(readr)
+library(dplyr)
+library(ggplot2)
+library(purrr)
+
+# función de plot
+plot_points_in_map <- function(df, color_by_class = FALSE, title = NULL, subtitle = NULL, caption = NULL) {
+  
+  p <- ggplot()
+  
+  if (color_by_class) {
+    p <- p +
+      geom_point(
+        data = df,
+        aes(x = decimalLongitude, y = decimalLatitude, color = factor(class)),
+        size = 0.8
+      ) +
+      scale_color_manual(
+        values = c("1" = "red", "0" = "blue"),
+        name = "class"
+      )
+  } else {
+    p <- p +
+      geom_point(
+        data = df,
+        aes(x = decimalLongitude, y = decimalLatitude),
+        color = "blue",
+        size = 0.8
+      )
+  }
+  
+  p +
+    coord_sf() +
+    theme_minimal() +
+    labs(
+      title = title,
+      subtitle = subtitle,
+      caption = caption
+    )
+}
+
+# paths
+output_dir <- "../../data/outputs/sdm_parallel"
+manifest <- read_csv(file.path(output_dir, "manifest.csv"), show_col_types = FALSE)
+
+# recorrer corridas
+for (i in seq_len(nrow(manifest))) {
+  
+  run <- manifest[i, ]
+  dataset_path <- file.path(run$output_dir, "sdm_dataset_model_ready.csv")
+  
+  if (!file.exists(dataset_path)) next
+  
+  print("AAAAA")
+  df <- read_csv(dataset_path, show_col_types = FALSE)
+  
+  p <- plot_points_in_map(
+    df = df,
+    color_by_class = TRUE,
+    title = paste("Dataset:", run$species),
+    subtitle = paste0(
+      "bias = ", run$bias_method,
+      if (!is.na(run$bias_param)) paste0(" (", run$bias_param, " km)") else "",
+      " | bp = ", run$bp_method,
+      " | bp_n_strategy = ", run$bp_n_strategy,
+      " | bp_n = ", run$bp_n,
+      " | env = ", run$env_set
+    ),
+    caption = paste0(
+      "run_id: ", run$run_id,
+      " | presencias: ", run$n_occ_after_bias,
+      " | background: ", run$n_background
+    )
+  )
+  
+  print(p)
+}
+```
+
