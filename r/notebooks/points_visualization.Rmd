@@ -14,35 +14,6 @@ knitr::opts_chunk$set(echo = TRUE)
 source("../src/plot.R")
 ```
 
-```{r plot-all-datasets, echo=FALSE, results='asis'}
-# Cargar librerías necesarias
-library(ggplot2)
-library(readr)
-library(purrr)
-library(stringr)
-
-# Ruta a la carpeta de outputs
-output_dir <- "../../data/outputs/sdm_parallel"
-
-# Listar todos los archivos de dataset model-ready
-dataset_files <- list.files(path = output_dir, pattern = "sdm_dataset_model_ready.csv", full.names = TRUE, recursive = TRUE)
-
-# Iterar sobre cada archivo y generar el gráfico
-walk(dataset_files, function(file_path) {
-  
-  # Leer el dataset
-  df <- read_csv(file_path, show_col_types = FALSE)
-  
-  # Extraer el nombre del archivo para obtener los parámetros
-  run_id <- basename(dirname(file_path))
-  
-  # Mostrar el título con los parámetros
-  cat("\n\n### Parámetros del dataset: `", run_id, "`\n\n")
-  
-  # Mostrar el gráfico
-  print(plot_points_in_map(df, color_by_class = TRUE))
-})
-```
 ```{r plot-all-datasets, echo=FALSE, warning=FALSE, message=FALSE, fig.width=8, fig.height=6}
 library(readr)
 library(dplyr)
@@ -97,7 +68,6 @@ for (i in seq_len(nrow(manifest))) {
   
   if (!file.exists(dataset_path)) next
   
-  print("AAAAA")
   df <- read_csv(dataset_path, show_col_types = FALSE)
   
   p <- plot_points_in_map(
