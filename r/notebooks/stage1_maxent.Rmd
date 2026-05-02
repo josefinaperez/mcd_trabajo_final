@@ -1,0 +1,69 @@
+---
+title: "Resultados MaxEnt — visualización"
+output: html_document
+date: "2026-04-30"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, message = FALSE, warning = FALSE)
+
+suppressPackageStartupMessages({
+  library(readr)
+  library(dplyr)
+  library(knitr)
+})
+```
+
+> Esta notebook **no entrena nada**: solo levanta artefactos pre-generados por
+> `r/src/train_pipeline.R`. Si los archivos no existen, correr primero:
+>
+> ```r
+> source("r/src/train_pipeline.R")
+> ```
+
+```{r paths}
+MODELS_ROOT <- "../../data/outputs/sdm_models"
+
+manifest_path <- file.path(MODELS_ROOT, "manifest.csv")
+summary_path  <- file.path(MODELS_ROOT, "summary_table.csv")
+auc_plot_path <- file.path(MODELS_ROOT, "auc_comparison.png")
+
+stopifnot(file.exists(manifest_path), file.exists(summary_path))
+```
+
+## 1. Resumen de corridas
+
+```{r summary}
+summary_table <- read_csv(summary_path, show_col_types = FALSE)
+kable(summary_table, digits = 3)
+```
+
+## 2. Comparación de AUC
+
+```{r auc-plot, out.width="100%"}
+include_graphics(auc_plot_path)
+```
+
+## 3. Curvas de respuesta por modelo
+
+```{r response-curves, results='asis'}
+models_manifest <- read_csv(manifest_path, show_col_types = FALSE)
+
+for (i in seq_len(nrow(models_manifest))) {
+  run_id <- models_manifest$run_id[i]
+  png    <- file.path(MODELS_ROOT, run_id, "response_curves.png")
+
+  cat("###", run_id, "\n\n")
+  if (file.exists(png)) {
+    cat(sprintf('<img src="%s" style="width:100%%; max-width:900px;" />\n\n', png))
+  } else {
+    cat("_(sin curvas: ", png, " no existe)_\n\n", sep = "")
+  }
+}
+```
+
+## 4. Manifest completo
+
+```{r full-manifest}
+kable(models_manifest, digits = 3)
+```
