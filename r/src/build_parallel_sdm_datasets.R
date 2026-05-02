@@ -236,30 +236,49 @@ sample_random_background_from_shp <- function(shp_path,
                                               n = 10000,
                                               seed = 42,
                                               lon_col = "decimalLongitude",
-                                              lat_col = "decimalLatitude") {
+                                              lat_col = "decimalLatitude",
+                                              max_attempts = 5,
+                                              oversample_factor = 3) {
   set.seed(seed)
-  
+
   # Leer shapefile
   study_area <- st_read(shp_path, quiet = TRUE)
-  
+
   # Asegurar geometrías válidas
   study_area <- st_make_valid(study_area)
-  
+
   # Unificar en una sola geometría por si hay varias partes
   study_area <- st_union(study_area)
-  
+
   # Convertir a sf
   study_area <- st_as_sf(study_area)
-  
-  # Muestrear puntos aleatorios dentro del polígono
-  pts <- st_sample(study_area, size = n, type = "random")
-  
-  if (length(pts) == 0) {
+
+  # st_sample con type = "random" devuelve aproximadamente `size` puntos
+  # (proceso Poisson). Para n chico puede dar 0; oversampleamos y recortamos.
+  # Acumulamos en lista de sfc y concatenamos con do.call(c, ...) para
+  # preservar la clase sfc (c(list(), sfc) la pierde).
+  batches <- vector("list", 0)
+  n_have  <- 0L
+  attempt <- 0L
+
+  while (n_have < n && attempt < max_attempts) {
+    attempt <- attempt + 1L
+    target  <- max(n * oversample_factor, 50L)
+    new_pts <- st_sample(study_area, size = target, type = "random")
+    if (length(new_pts) > 0) {
+      batches[[length(batches) + 1L]] <- new_pts
+      n_have <- n_have + length(new_pts)
+    }
+  }
+
+  if (n_have == 0) {
     stop("No se pudieron generar puntos aleatorios dentro del shapefile.")
   }
-  
-  pts_sf <- st_as_sf(pts)
-  pts_sf <- st_set_crs(pts_sf, st_crs(study_area))
+
+  pts <- do.call(c, batches)
+  if (length(pts) > n) pts <- pts[seq_len(n)]
+
+  pts_sf <- st_sf(geometry = pts, crs = st_crs(study_area))
   
   # Pasar a lon/lat si hiciera falta
   pts_sf <- st_transform(pts_sf, 4326)

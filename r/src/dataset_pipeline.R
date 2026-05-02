@@ -3,74 +3,81 @@ source("r/src/preprocessing.R")
 source("r/src/grid_thinning.R")
 source("r/src/build_parallel_sdm_datasets.R")
 
+for (d in c("data/ocurrences/raw",
+            "data/ocurrences/processed",
+            "data/outputs/sdm_parallel",
+            "data/outputs/sdm_models")) {
+  dir.create(d, recursive = TRUE, showWarnings = FALSE)
+}
+
+# ------------------------------------------------------------
+# Path helpers: el archivo de cada especie es df_<slug>.csv
+# (mismo slug que usa download_gbif y safe_slug en build_*)
+# ------------------------------------------------------------
+
+slug <- function(x) {
+  x <- gsub("[^a-z0-9]+", "_", tolower(x))
+  gsub("^_|_$", "", x)
+}
+
+species_csv <- function(scientific_name, dir) {
+  file.path(dir, paste0("df_", slug(scientific_name), ".csv"))
+}
+
+# ------------------------------------------------------------
+# Única fuente de verdad: una fila por especie a procesar.
+# Agregar una especie aquí propaga a download, preprocess y build.
+# ------------------------------------------------------------
+
+species_config <- tibble::tribble(
+  ~scientific_name,         ~min_year, ~max_uncertainty_km,
+  "Polyporaceae",                 1945,                  10
+  # "Pycnoporus sanguineus",      1945,                  10,
+  # "Ganoderma applanatum",       1945,                  10
+)
+
+raw_occ_dir       <- "data/ocurrences/raw"
+processed_occ_dir <- "data/ocurrences/processed"
+shp_path          <- "data/shp/argentina/argentina.shp"
+tests_default     <- c("equal", "duplicates", "outliers", "zeros")
 
 # ------------------------------------------------------------
 # 0) DOWNLOAD SPECIES DATA FROM GBIF
 # ------------------------------------------------------------
 
-
-species_list <- c(
-  "Polyporaceae",
-  "Pycnoporus sanguineus"
-)
-
 res <- download_gbif_fungi_species_batch(
-  species_list = species_list,
+  species_list = species_config$scientific_name,
   country_code = "AR",
-  max_records = 10000,
-  out_dir = "data/ocurrences/raw"
+  max_records  = 10000,
+  out_dir      = raw_occ_dir
 )
 
 # ------------------------------------------------------------
-# 0) PREPROCESS RAW OCCURRENCE DATASETS
+# 1) PREPROCESS RAW OCCURRENCE DATASETS
 # ------------------------------------------------------------
 
-shp_path <- "data/shp/argentina/argentina.shp"
+for (i in seq_len(nrow(species_config))) {
+  sp <- species_config$scientific_name[i]
+  message("Preprocessing: ", sp)
 
-min_year_default <- 1945
-max_uncertainty_km_default <- 10
-
-tests_default <- c(
-  "equal",
-  "duplicates",
-  "outliers",
-  "zeros"
-)
-
-raw_occ_dir <- "../data/ocurrences/raw"
-processed_occ_dir <- "../data/ocurrences/processed"
-
-species_preproc_table <- tibble::tribble(
-  ~species,               ~scientific_name,       ~raw_file,                     ~processed_file,               ~min_year, ~max_uncertainty_km,
-  "Pycnoporus Sanguineus",   "Pycnoporus Sanguineus",   "df_pycnoporus_sanguineus.csv",   "df_trametes_sanguinea.csv",   1945,      10
-  # "Ganoderma applanatum", "Ganoderma applanatum", "df_ganoderma_applanatum.csv", "df_ganoderma_applanatum.csv", 1945, 10
-)
-
-for (i in seq_len(nrow(species_preproc_table))) {
-  raw_path <- file.path(raw_occ_dir, species_preproc_table$raw_file[i])
-  processed_path <- file.path(processed_occ_dir, species_preproc_table$processed_file[i])
-  
-  message("Preprocessing: ", species_preproc_table$species[i])
-  
   preprocess_dataset(
-    df_path = raw_path,
-    preproc_path = processed_path,
-    min_year = species_preproc_table$min_year[i] %||% min_year_default,
-    scientific_name = species_preproc_table$scientific_name[i],
-    max_uncertainty_km = species_preproc_table$max_uncertainty_km[i] %||% max_uncertainty_km_default,
-    shp_path = shp_path,
-    tests = tests_default
+    df_path            = species_csv(sp, raw_occ_dir),
+    preproc_path       = species_csv(sp, processed_occ_dir),
+    min_year           = species_config$min_year[i],
+    scientific_name    = sp,
+    max_uncertainty_km = species_config$max_uncertainty_km[i],
+    shp_path           = shp_path,
+    tests              = tests_default
   )
 }
 
 # ------------------------------------------------------------
-# 1) BUILD DATASET WITH BIAS CORRECTION AND BACKGROUND POINTS
+# 2) BUILD DATASET WITH BIAS CORRECTION AND BACKGROUND POINTS
 # ------------------------------------------------------------
 
-species_table <- tibble::tribble(
-  ~species,               ~occ_file,
-  "Trametes sanguinea",   "df_trametes_sanguinea.csv",
-  #"Ganoderma applanatum", "ganoderma_applanatum_clean.csv"
+species_table <- tibble::tibble(
+  species  = species_config$scientific_name,
+  occ_file = paste0("df_", slug(species_config$scientific_name), ".csv")
 )
 
 env_sets <- list(
@@ -82,22 +89,21 @@ env_sets <- list(
 fixed_bp_n <- 10000L
 
 config_table <- make_config_table(
-  species_table = species_table,
-  bp_methods = c("random"),
+  species_table   = species_table,
+  bp_methods      = c("random"),
   bp_n_strategies = c("fixed", "match_presence"),
-  fixed_bp_n = fixed_bp_n,
-  env_sets = c("bioclim_30s"),
-  grid_sizes_km = c(10, 50)
+  fixed_bp_n      = fixed_bp_n,
+  env_sets        = c("bioclim_30s"),
+  grid_sizes_km   = c(10, 50)
 )
 
 manifest <- build_parallel_sdm_datasets(
   config_table = config_table,
-  env_sets = env_sets,
-  occ_dir = "data/ocurrences/processed",
-  out_dir = "data/outputs/sdm_parallel",
-  fixed_bp_n = fixed_bp_n,
+  env_sets     = env_sets,
+  occ_dir      = processed_occ_dir,
+  out_dir      = "data/outputs/sdm_parallel",
+  fixed_bp_n   = fixed_bp_n,
   cols_to_keep = NA
 )
 
 print(manifest)
-

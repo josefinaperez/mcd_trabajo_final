@@ -45,27 +45,58 @@ preprocess_dataset <- function(df_path,
                        basisOfRecord == "LIVING_SPECIMEN")
   
   
-  # Remover registros según los tests
-  flags <- clean_coordinates(x = df_clean, 
-                             lon = "decimalLongitude", 
-                             lat = "decimalLatitude",
-                             species = "species",
-                             tests = tests)
-  
-  flag_cols <- names(flags)[grepl("^\\.", names(flags)) & names(flags) != ".summary"]
-  
-  df_flagged <- df_clean[!flags$.summary,]
-  
-  df_flagged$FLAG <- apply(
-    flags[!flags$.summary, flag_cols],
-    1,
-    function(x) {
-      paste(flag_cols[!x], collapse = ", ")
-    }
+  # Remover registros según los tests.
+  # `clean_coordinates()` (wrapper) tiene un bug de longitud de nombres en
+  # cbind interno con datasets chicos / 1 sola especie. Llamamos las
+  # funciones cc_* individuales: cada una devuelve un vector lógico
+  # (TRUE = válido) que combinamos con AND. Sin cbind, sin el bug.
+  cc_input <- as.data.frame(df_clean)
+
+  test_fns <- list(
+    equal      = function(d) cc_equ(d,  lon = "decimalLongitude", lat = "decimalLatitude", value = "flagged"),
+    zeros      = function(d) cc_zero(d, lon = "decimalLongitude", lat = "decimalLatitude", value = "flagged"),
+    duplicates = function(d) cc_dupl(d, lon = "decimalLongitude", lat = "decimalLatitude",
+                                     species = "species", value = "flagged"),
+    outliers   = function(d) cc_outl(d, lon = "decimalLongitude", lat = "decimalLatitude",
+                                     species = "species", value = "flagged")
   )
+
+  flag_mat <- vapply(
+    tests,
+    function(t) {
+      fn <- test_fns[[t]]
+      if (is.null(fn)) {
+        warning("Unknown CoordinateCleaner test: ", t, " (skipped)")
+        return(rep(TRUE, nrow(cc_input)))
+      }
+      tryCatch(
+        as.logical(fn(cc_input)),
+        error = function(e) {
+          warning("cc_", t, " failed (", conditionMessage(e),
+                  "); skipping for ", scientific_name)
+          rep(TRUE, nrow(cc_input))
+        }
+      )
+    },
+    logical(nrow(cc_input))
+  )
+
+  # Si solo hay un test, vapply devuelve vector → reconvertir a matriz
+  if (is.null(dim(flag_mat))) flag_mat <- matrix(flag_mat, ncol = length(tests))
+  colnames(flag_mat) <- tests
+
+  ok_rows <- apply(flag_mat, 1, all)
+
+  df_flagged <- df_clean[!ok_rows, , drop = FALSE]
+  df_flagged$FLAG <- apply(
+    flag_mat[!ok_rows, , drop = FALSE],
+    1,
+    function(x) paste(tests[!x], collapse = ", ")
+  )
+
+  df_clean <- df_clean[ok_rows, , drop = FALSE]
   
-  df_clean <- df_clean[flags$.summary,]
-  
+  dir.create(dirname(preproc_path), recursive = TRUE, showWarnings = FALSE)
   readr::write_csv(df_clean, preproc_path)
   
   return(list(df_clean = df_clean,

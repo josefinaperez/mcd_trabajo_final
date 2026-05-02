@@ -9,7 +9,9 @@ filter_points <- function(shp,
                           df,
                           lon_col,
                           lat_col) {
-  
+
+  shp <- sf::st_union(sf::st_make_valid(shp))
+
   df_filtered <- df |>
     mutate(
       x = df[[lon_col]],
@@ -17,13 +19,12 @@ filter_points <- function(shp,
     ) |>
     st_as_sf(coords = c(lon_col, lat_col), crs = 4326) |>
     st_transform(st_crs(shp)) |>
-    filter(st_within(geometry, shp, sparse = FALSE)) |>
+    filter(lengths(st_within(geometry, shp)) > 0) |>
     st_drop_geometry() |>
-    #dplyr::select(x, y) |>
     rename(
       !!lon_col := x,
       !!lat_col := y
     )
-  
+
   return(df_filtered)
 }
