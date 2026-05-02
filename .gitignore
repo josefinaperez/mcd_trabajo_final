@@ -213,3 +213,13 @@ data/
 # .DS_Store
 *.DS_Store
 .Rproj.user
+
+# R session / knit artifacts
+.Rhistory
+.RData
+r/notebooks/*.html
+r/notebooks/*_files/
+r/notebooks/*_cache/
+
+# Carpeta de notas locales del usuario (no se comittea)
+docs/
