@@ -10,6 +10,7 @@
 # ============================================================
 
 source("r/src/train_maxent.R")
+source("r/src/evaluate_model.R")
 
 suppressPackageStartupMessages({
   library(readr)
@@ -63,7 +64,34 @@ metrics_per_run <- purrr::map_dfr(seq_len(nrow(datasets_manifest)), function(i) 
 })
 
 # ------------------------------------------------------------
-# 3) Manifest global de modelos (dataset + métricas)
+# 3) Evaluación dual (TSS / FNR @ Youden) sobre los runs entrenados
+# ------------------------------------------------------------
+#
+# Esquema dual de Miyaji et al. (2026): se calculan métricas
+# dependientes de umbral (threshold de Youden = max TSS) sobre
+# las predicciones de test ya persistidas. La selección final
+# del modelo se realiza después, en el notebook de resultados,
+# aplicando el filtro jerárquico FNR -> max TSS.
+#
+# Ver docs/metodologia/4.5_evaluacion_dual.md para el detalle.
+
+dual_metrics <- evaluate_all_runs(MODELS_ROOT)
+
+metrics_per_run <- metrics_per_run |>
+  left_join(dual_metrics, by = "run_id")
+
+# Persistir el metrics.csv extendido en cada run_dir, para que
+# las métricas duales queden junto a las threshold-independent.
+purrr::walk(seq_len(nrow(metrics_per_run)), function(i) {
+  run_metrics <- metrics_per_run[i, , drop = FALSE]
+  write_csv(
+    run_metrics,
+    file.path(MODELS_ROOT, run_metrics$run_id, "metrics.csv")
+  )
+})
+
+# ------------------------------------------------------------
+# 4) Manifest global de modelos (dataset + métricas)
 # ------------------------------------------------------------
 
 models_manifest <- datasets_manifest |>
@@ -73,7 +101,7 @@ models_manifest <- datasets_manifest |>
 write_csv(models_manifest, file.path(MODELS_ROOT, "manifest.csv"))
 
 # ------------------------------------------------------------
-# 4) Tabla resumen lista para mostrar (Rmd la levanta tal cual)
+# 5) Tabla resumen lista para mostrar (Rmd la levanta tal cual)
 # ------------------------------------------------------------
 
 summary_table <- models_manifest |>
@@ -87,14 +115,17 @@ summary_table <- models_manifest |>
   ) |>
   select(run_id, species, bias_label, bp_label,
          n_train_pres, n_test_pres, n_train_bg, n_test_bg,
-         auc_test, train_secs)
+         auc_test, threshold_max_tss, sensitivity, specificity,
+         tss, fnr, train_secs) |>
+  arrange(desc(tss))
 
 write_csv(summary_table, file.path(MODELS_ROOT, "summary_table.csv"))
 
 # ------------------------------------------------------------
-# 5) Plot resumen pre-renderizado (AUC por config)
+# 6) Plots resumen pre-renderizados
 # ------------------------------------------------------------
 
+# 6a) AUC por configuración (informativo, no se usa para selección)
 auc_plot <- summary_table |>
   ggplot(aes(x = bias_label, y = auc_test, fill = bp_label)) +
   geom_col(position = position_dodge(width = 0.8), width = 0.7) +
@@ -103,13 +134,24 @@ auc_plot <- summary_table |>
   labs(x = "Corrección de sesgo espacial",
        y = "AUC (test)",
        fill = "Background points",
-       title = "Comparación de AUC por configuración") +
+       title = "Comparación de AUC por configuración (informativo)") +
   theme_minimal()
 
 ggsave(
   filename = file.path(MODELS_ROOT, "auc_comparison.png"),
   plot     = auc_plot,
   width    = 9, height = 5, dpi = 120
+)
+
+# 6b) Evaluación dual: TSS vs FNR (criterio de selección Miyaji)
+dual_plot <- summary_table |>
+  mutate(config_label = paste(bias_label, bp_label, sep = " | ")) |>
+  make_dual_metrics_plot(label_var = "config_label")
+
+ggsave(
+  filename = file.path(MODELS_ROOT, "dual_metrics_comparison.png"),
+  plot     = dual_plot,
+  width    = 9, height = 6, dpi = 120
 )
 
 message("OK. Outputs en: ", MODELS_ROOT)
