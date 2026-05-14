@@ -17,6 +17,7 @@ suppressPackageStartupMessages({
   library(sf)
   library(tidyterra)
   library(patchwork)
+  library(maxnet)   # registra predict.maxnet para terra::predict
 })
 
 WORLDCLIM_DIR  <- "data/features/worldclim/wc2.1_30s_bio"
@@ -48,4 +49,32 @@ load_env_stack <- function(worldclim_dir = WORLDCLIM_DIR,
   env |>
     terra::crop(ar_v) |>
     terra::mask(ar_v)
+}
+
+# ------------------------------------------------------------
+# 2) RASTER PREDICTION
+# ------------------------------------------------------------
+#
+# Proyecta un modelo maxnet sobre el SpatRaster apilado.
+# Usa terra::predict con un wrapper que invoca el predict.maxnet
+# subyacente con type = "cloglog" y clamp = TRUE (idéntico al
+# usado en train_maxent.R para garantizar que las idoneidades
+# del mapa sean comparables con las del set de prueba).
+# Devuelve un SpatRaster mono-capa llamado "suitability".
+# ------------------------------------------------------------
+
+predict_suitability_raster <- function(model, env_stack) {
+  predict_chunk <- function(model, data, ...) {
+    predict(model, newdata = as.data.frame(data),
+            type = "cloglog", clamp = TRUE)
+  }
+
+  out <- terra::predict(
+    object = env_stack,
+    model  = model,
+    fun    = predict_chunk,
+    na.rm  = TRUE
+  )
+  names(out) <- "suitability"
+  out
 }
