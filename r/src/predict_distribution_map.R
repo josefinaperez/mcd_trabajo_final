@@ -104,3 +104,65 @@ binarize_raster <- function(suit_r, threshold) {
   names(out) <- "binary_presence"
   out
 }
+
+# ------------------------------------------------------------
+# 4) PANEL CARTOGRÁFICO
+# ------------------------------------------------------------
+#
+# Compone dos paneles lado a lado: idoneidad continua con
+# escala viridis y mapa binario en τ*. Sobre ambos se
+# superponen las presencias GBIF del run (alpha bajo). Se
+# usa tidyterra::geom_spatraster para que los SpatRaster
+# se integren limpiamente con ggplot.
+# ------------------------------------------------------------
+
+plot_map_panel <- function(suit_r, bin_r, run_id, threshold, occ_points) {
+  stopifnot(
+    inherits(suit_r, "SpatRaster"),
+    inherits(bin_r,  "SpatRaster"),
+    all(c("decimalLongitude", "decimalLatitude") %in% names(occ_points))
+  )
+
+  p_cont <- ggplot() +
+    tidyterra::geom_spatraster(data = suit_r) +
+    scale_fill_viridis_c(
+      name   = "Idoneidad\n(cloglog)",
+      limits = c(0, 1),
+      na.value = "transparent"
+    ) +
+    geom_point(
+      data = occ_points,
+      aes(x = decimalLongitude, y = decimalLatitude),
+      colour = "white", fill = "black",
+      shape = 21, size = 0.6, stroke = 0.2, alpha = 0.55
+    ) +
+    coord_sf(crs = 4326) +
+    labs(title = "Idoneidad ambiental (continua)") +
+    theme_minimal(base_size = 10) +
+    theme(legend.position = "right")
+
+  p_bin <- ggplot() +
+    tidyterra::geom_spatraster(data = as.factor(bin_r)) +
+    scale_fill_manual(
+      name   = paste0("Presencia\n(τ* = ", sprintf("%.3f", threshold), ")"),
+      values = c("0" = "#e5e5e5", "1" = "#2c7a3e"),
+      labels = c("0" = "no apto", "1" = "apto"),
+      na.value = "transparent"
+    ) +
+    geom_point(
+      data = occ_points,
+      aes(x = decimalLongitude, y = decimalLatitude),
+      colour = "white", fill = "black",
+      shape = 21, size = 0.6, stroke = 0.2, alpha = 0.55
+    ) +
+    coord_sf(crs = 4326) +
+    labs(title = "Presencia / no apto (binario)") +
+    theme_minimal(base_size = 10) +
+    theme(legend.position = "right")
+
+  (p_cont | p_bin) +
+    patchwork::plot_annotation(
+      title    = paste0("Distribución potencial — ", run_id),
+      subtitle = "Predicción MaxEnt sobre Argentina (WorldClim 30 arc-sec, EPSG:4326)"
+    )
+}
