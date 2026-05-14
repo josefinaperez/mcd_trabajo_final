@@ -78,3 +78,29 @@ predict_suitability_raster <- function(model, env_stack) {
   names(out) <- "suitability"
   out
 }
+
+# ------------------------------------------------------------
+# 3) BINARIZATION
+# ------------------------------------------------------------
+#
+# Aplica el umbral tau (en unidades de score cloglog) a un
+# raster continuo de idoneidad. Píxeles con score >= tau → 1
+# ("apto"), resto → 0 ("no apto"); los NA se preservan como
+# NA. El tau se lee del metrics.csv del run (columna
+# threshold_max_tss = τ* de Youden, consistente con §4.5
+# del documento metodológico).
+# ------------------------------------------------------------
+
+binarize_raster <- function(suit_r, threshold) {
+  stopifnot(is.numeric(threshold), length(threshold) == 1L)
+  out <- terra::classify(
+    suit_r,
+    rcl = matrix(c(-Inf, threshold,        0,
+                   threshold,        Inf,  1),
+                 ncol = 3, byrow = TRUE),
+    include.lowest = FALSE,
+    right = FALSE
+  )
+  names(out) <- "binary_presence"
+  out
+}
