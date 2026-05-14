@@ -166,3 +166,39 @@ plot_map_panel <- function(suit_r, bin_r, run_id, threshold, occ_points) {
       subtitle = "Predicción MaxEnt sobre Argentina (WorldClim 30 arc-sec, EPSG:4326)"
     )
 }
+
+# ------------------------------------------------------------
+# 5) PERSIST ARTIFACTS
+# ------------------------------------------------------------
+#
+# Persiste los 3 artefactos cartográficos en run_dir:
+#   - suitability.tif       : raster continuo (DEFLATE)
+#   - binary_presence.tif   : raster 0/1 (DEFLATE)
+#   - map_panel.png         : figura ggplot 1600x900
+# Devuelve invisible() la ruta del run_dir.
+# ------------------------------------------------------------
+
+save_map_artifacts <- function(run_dir, suit_r, bin_r, fig) {
+  dir.create(run_dir, recursive = TRUE, showWarnings = FALSE)
+
+  terra::writeRaster(
+    suit_r,
+    file.path(run_dir, "suitability.tif"),
+    overwrite = TRUE,
+    gdal = c("COMPRESS=DEFLATE", "PREDICTOR=2")
+  )
+  terra::writeRaster(
+    bin_r,
+    file.path(run_dir, "binary_presence.tif"),
+    overwrite = TRUE,
+    datatype  = "INT1U",
+    gdal      = c("COMPRESS=DEFLATE")
+  )
+  ggplot2::ggsave(
+    filename = file.path(run_dir, "map_panel.png"),
+    plot     = fig,
+    width    = 14, height = 7, dpi = 110
+  )
+
+  invisible(run_dir)
+}
