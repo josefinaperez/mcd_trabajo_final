@@ -1,0 +1,60 @@
+---
+title: "Etapa 3 — Mapa de distribución del modelo ganador"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, message = FALSE, warning = FALSE)
+library(readr)
+library(dplyr)
+library(knitr)
+
+MAPS_ROOT <- "../../data/outputs/sdm_maps"
+```
+
+## Selección del modelo ganador
+
+```{r winner-summary}
+winner <- readr::read_csv(file.path(MAPS_ROOT, "winner_summary.csv"),
+                          show_col_types = FALSE)
+knitr::kable(
+  winner,
+  digits = 4,
+  caption = "Modelo ganador bajo el esquema dual TSS+FNR (τ_FNR principal)."
+)
+```
+
+## Mapa de distribución del ganador
+
+```{r winner-map, out.width = "100%"}
+manifest <- readr::read_csv(file.path(MAPS_ROOT, "manifest.csv"),
+                            show_col_types = FALSE)
+winner_png <- manifest |> filter(is_winner) |> pull(png_path)
+knitr::include_graphics(winner_png)
+```
+
+## Sobrevivientes del filtro τ_FNR (comparación visual)
+
+```{r survivors, out.width = "100%", results = "asis"}
+survivors <- manifest |> filter(!is_winner)
+if (nrow(survivors) == 0) {
+  cat("_Solo el ganador pasa el filtro principal._")
+} else {
+  for (i in seq_len(nrow(survivors))) {
+    cat("\n\n### ", survivors$run_id[i], "\n\n", sep = "")
+    cat("![", survivors$run_id[i], "](", survivors$png_path[i], ")\n", sep = "")
+  }
+}
+```
+
+## Robustez de τ_FNR
+
+```{r robustness}
+rob <- readr::read_csv(file.path(MAPS_ROOT, "tau_fnr_robustness.csv"),
+                       show_col_types = FALSE)
+knitr::kable(
+  rob,
+  digits = 4,
+  caption = "Ganador y cantidad de sobrevivientes para distintos valores de τ_FNR."
+)
+```
