@@ -49,3 +49,27 @@ select_runs <- function(summary_df, tau_fnr) {
 
   out |> mutate(is_winner = run_id %in% winner_id)
 }
+
+# ------------------------------------------------------------
+# 2) ROBUSTEZ DE τ_FNR
+# ------------------------------------------------------------
+#
+# Aplica select_runs() sobre una grilla de valores de τ_FNR
+# y reporta, para cada uno, el ganador resultante, su TSS
+# y la cantidad de sobrevivientes. Es la evidencia empírica
+# de robustez prometida en §4.5.3 del documento metodológico.
+# ------------------------------------------------------------
+
+compute_tau_fnr_robustness <- function(summary_df, tau_fnr_grid) {
+  purrr::map_dfr(tau_fnr_grid, function(t) {
+    sel <- select_runs(summary_df, t)
+    winner <- sel |> filter(is_winner)
+    tibble(
+      tau_fnr        = t,
+      n_survivors    = sum(sel$passes_filter),
+      winner_run_id  = if (nrow(winner) == 1L) winner$run_id else NA_character_,
+      winner_tss     = if (nrow(winner) == 1L) winner$tss   else NA_real_,
+      winner_fnr     = if (nrow(winner) == 1L) winner$fnr   else NA_real_
+    )
+  })
+}
