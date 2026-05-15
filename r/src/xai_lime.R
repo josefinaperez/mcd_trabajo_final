@@ -137,3 +137,89 @@ select_lime_points <- function(predictions_test, ds_model_ready,
 
   out
 }
+
+# ------------------------------------------------------------
+# (3) compute_lime: corre lime sobre los puntos elegidos.
+#
+# Args:
+#   model          : modelo maxnet
+#   points         : tibble de select_lime_points()
+#   X_train        : data.frame con las columnas predictoras
+#                    (entrenamiento del modelo)
+#   n_features     : nº de features locales por punto (default 5)
+#   n_permutations : default 5000
+#
+# Returns:
+#   tibble largo: point_id, feature, weight, feature_value.
+# ------------------------------------------------------------
+
+compute_lime <- function(model, points, X_train,
+                         n_features = 5, n_permutations = 5000) {
+  pred_cols <- names(X_train)
+  set.seed(42)
+  explainer <- lime::lime(
+    x              = as.data.frame(X_train),
+    model          = model,
+    bin_continuous = TRUE,
+    n_bins         = 4
+  )
+
+  X_explain <- as.data.frame(points |> dplyr::select(dplyr::all_of(pred_cols)))
+  rownames(X_explain) <- points$point_id
+
+  set.seed(42)
+  expl <- lime::explain(
+    x              = X_explain,
+    explainer      = explainer,
+    n_features     = n_features,
+    n_permutations = n_permutations,
+    labels         = "presence"
+  )
+
+  tibble::as_tibble(expl) |>
+    dplyr::transmute(
+      point_id      = case,
+      feature       = feature,
+      weight        = feature_weight,
+      feature_value = feature_value
+    )
+}
+
+# ------------------------------------------------------------
+# (4) plot_lime_panel: 8 subplots, barras horizontales de pesos.
+#     Verde = empuja a presence; rojo = empuja a background.
+# ------------------------------------------------------------
+
+plot_lime_panel <- function(lime_df, points, run_id) {
+  meta <- points |> dplyr::select(point_id, origin, score, lon, lat)
+
+  make_subplot <- function(pid) {
+    sub <- lime_df |> dplyr::filter(point_id == pid)
+    m   <- meta   |> dplyr::filter(point_id == pid)
+    titlestr <- if (is.na(m$score)) {
+      sprintf("%s\n(%.2f, %.2f) — %s", pid, m$lon, m$lat, m$origin)
+    } else {
+      sprintf("%s\nscore=%.2f — %s", pid, m$score, m$origin)
+    }
+    sub |>
+      dplyr::mutate(sign = ifelse(weight >= 0, "presence", "background")) |>
+      ggplot(aes(x = stats::reorder(feature, weight),
+                 y = weight, fill = sign)) +
+      geom_col() +
+      coord_flip() +
+      scale_fill_manual(values = c(presence = "#2ca02c",
+                                   background = "#d62728"),
+                        guide = "none") +
+      labs(x = NULL, y = "peso LIME",
+           title = titlestr) +
+      theme_minimal(base_size = 8) +
+      theme(plot.title = element_text(size = 8))
+  }
+
+  plots <- lapply(points$point_id, make_subplot)
+  patchwork::wrap_plots(plots, ncol = 4) +
+    patchwork::plot_annotation(
+      title = paste0("LIME — ", run_id),
+      theme = ggplot2::theme(plot.title = element_text(size = 11))
+    )
+}
