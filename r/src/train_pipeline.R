@@ -1,9 +1,12 @@
 # ============================================================
 # File: train_pipeline.R
 # Purpose: Entrenar MaxEnt sobre todos los datasets del manifest
-#          generado por dataset_pipeline.R y persistir todos los
-#          outputs necesarios para visualizar resultados después
-#          (sin necesidad de re-correr nada).
+#          generado por dataset_pipeline.R, con dos esquemas de
+#          evaluación coexistiendo en el mismo manifest:
+#            - holdout       : split estratificado 70/30 (seed=42)
+#            - spatial_block : k=5 folds sobre grilla AEA Argentina,
+#                              tamaño de bloque derivado de la
+#                              autocorrelación de las BIO.
 #
 # Run from repo root:
 #   source("r/src/train_pipeline.R")
@@ -11,6 +14,7 @@
 
 source("r/src/train_maxent.R")
 source("r/src/evaluate_model.R")
+source("r/src/spatial_cv.R")
 
 suppressPackageStartupMessages({
   library(readr)
@@ -23,11 +27,18 @@ suppressPackageStartupMessages({
 # Configuración
 # ------------------------------------------------------------
 
-DATASETS_ROOT <- "data/outputs/sdm_parallel"
-MODELS_ROOT   <- "data/outputs/sdm_models"
-SEED          <- 42
-P_TRAIN       <- 0.7
-REGMULT       <- 1
+DATASETS_ROOT  <- "data/outputs/sdm_parallel"
+MODELS_ROOT    <- "data/outputs/sdm_models"
+ENV_DIR        <- "data/features/worldclim/wc2.1_30s_bio"
+ARGENTINA_SHP  <- "data/shp/argentina/argentina.shp"
+
+SEED           <- 42
+P_TRAIN        <- 0.7
+REGMULT        <- 1
+K_FOLDS        <- 5L
+BLOCK_SIZE_CAP_KM <- 300L
+
+CV_SCHEMES     <- c("holdout", "spatial_block")
 
 dir.create(MODELS_ROOT, recursive = TRUE, showWarnings = FALSE)
 
@@ -44,64 +55,132 @@ if (!file.exists(datasets_manifest_path)) {
 datasets_manifest <- read_csv(datasets_manifest_path, show_col_types = FALSE)
 
 # ------------------------------------------------------------
-# 2) Entrenar MaxEnt para cada dataset
+# 2) Calibración global del tamaño de bloque
+# ------------------------------------------------------------
+#
+# La autocorrelación espacial se computa sobre las BIO una sola
+# vez para toda la corrida: depende del paisaje climático, no
+# del dataset específico. El tamaño efectivo se acota a
+# BLOCK_SIZE_CAP_KM (las BIO climáticas a escala continental
+# tienen ranges enormes; el cap mantiene los bloques manejables
+# dentro de Argentina).
+
+env_paths <- list.files(ENV_DIR, pattern = "\\.tif$", full.names = TRUE)
+if (length(env_paths) == 0) {
+  stop("No se encontraron rasters de BIO en ", ENV_DIR)
+}
+
+message("Calibrando tamaño de bloque por autocorrelación...")
+block_calib <- calibrate_block_size(
+  env_raster_paths = env_paths,
+  argentina_shp    = ARGENTINA_SHP,
+  size_cap_km      = BLOCK_SIZE_CAP_KM,
+  seed             = SEED
+)
+BLOCK_SIZE_M <- block_calib$size_m
+message(sprintf(
+  "  autocor range (menor plausible): %.0f km  |  size efectivo: %.0f km  |  capped: %s",
+  block_calib$autocor_range_m / 1000,
+  BLOCK_SIZE_M / 1000,
+  block_calib$capped
+))
+
+# Persistir diagnóstico de autocor (para citar en docs)
+write_csv(block_calib$range_table, file.path(MODELS_ROOT, "autocor_range_table.csv"))
+write_csv(
+  tibble(
+    size_m            = BLOCK_SIZE_M,
+    autocor_range_m   = block_calib$autocor_range_m,
+    size_cap_km       = BLOCK_SIZE_CAP_KM,
+    capped            = block_calib$capped,
+    k_folds           = K_FOLDS
+  ),
+  file.path(MODELS_ROOT, "spatial_cv_config.csv")
+)
+
+# ------------------------------------------------------------
+# 3) Entrenamiento dual: holdout + spatial_block por dataset
 # ------------------------------------------------------------
 
-metrics_per_run <- purrr::map_dfr(seq_len(nrow(datasets_manifest)), function(i) {
+train_one <- function(i, cv_scheme) {
   run_id       <- datasets_manifest$run_id[i]
   dataset_path <- file.path(DATASETS_ROOT, run_id, "sdm_dataset_model_ready.csv")
 
-  message("[", i, "/", nrow(datasets_manifest), "] ", run_id)
+  message("[", i, "/", nrow(datasets_manifest), "] ", run_id, "  (", cv_scheme, ")")
 
-  run_maxent_for_dataset(
-    run_id       = run_id,
-    dataset_path = dataset_path,
-    out_root     = MODELS_ROOT,
-    p_train      = P_TRAIN,
-    seed         = SEED,
-    regmult      = REGMULT
-  )
+  if (cv_scheme == "spatial_block") {
+    ds_df <- read_csv(dataset_path, show_col_types = FALSE)
+    sb <- assign_spatial_folds(
+      df     = ds_df,
+      size_m = BLOCK_SIZE_M,
+      k      = K_FOLDS,
+      seed   = SEED
+    )
+    # Persistir el plot de bloques para sanity-check
+    p <- plot_spatial_folds(sb$blocks, ds_df, sb$fold_id,
+                            argentina_shp = ARGENTINA_SHP)
+    fold_plot_dir <- file.path(MODELS_ROOT, run_id, "spatial_block")
+    dir.create(fold_plot_dir, recursive = TRUE, showWarnings = FALSE)
+    ggsave(file.path(fold_plot_dir, "blocks_map.png"), p,
+           width = 7, height = 8, dpi = 110)
+
+    run_maxent_for_dataset(
+      run_id    = run_id,
+      dataset_path = dataset_path,
+      out_root  = MODELS_ROOT,
+      cv_scheme = "spatial_block",
+      fold_id   = sb$fold_id,
+      regmult   = REGMULT
+    )
+  } else {
+    run_maxent_for_dataset(
+      run_id    = run_id,
+      dataset_path = dataset_path,
+      out_root  = MODELS_ROOT,
+      cv_scheme = "holdout",
+      p_train   = P_TRAIN,
+      seed      = SEED,
+      regmult   = REGMULT
+    )
+  }
+}
+
+basic_metrics_per_run <- purrr::map_dfr(CV_SCHEMES, function(scheme) {
+  purrr::map_dfr(seq_len(nrow(datasets_manifest)), train_one, cv_scheme = scheme)
 })
 
 # ------------------------------------------------------------
-# 3) Evaluación dual (TSS / FNR @ Youden) sobre los runs entrenados
+# 4) Evaluación dual (TSS / FNR @ Youden + Boyce) por run
 # ------------------------------------------------------------
-#
-# Esquema dual de Miyaji et al. (2026): se calculan métricas
-# dependientes de umbral (threshold de Youden = max TSS) sobre
-# las predicciones de test ya persistidas. La selección final
-# del modelo se realiza después, en el notebook de resultados,
-# aplicando el filtro jerárquico FNR -> max TSS.
-#
-# Ver docs/metodologia/4.5_evaluacion_dual.md para el detalle.
 
-dual_metrics <- evaluate_all_runs(MODELS_ROOT)
+dual_metrics <- basic_metrics_per_run |>
+  select(run_id, cv_scheme) |>
+  mutate(
+    model_dir = file.path(MODELS_ROOT, run_id, cv_scheme),
+    dual = purrr::map(model_dir, evaluate_run_dir)
+  ) |>
+  tidyr::unnest(dual)
 
-metrics_per_run <- metrics_per_run |>
-  left_join(dual_metrics, by = "run_id")
+metrics_per_run <- basic_metrics_per_run |>
+  left_join(dual_metrics, by = c("run_id", "cv_scheme"))
 
-# Persistir el metrics.csv extendido en cada run_dir, para que
-# las métricas duales queden junto a las threshold-independent.
+# Persistir metrics.csv extendido en cada run_dir
 purrr::walk(seq_len(nrow(metrics_per_run)), function(i) {
-  run_metrics <- metrics_per_run[i, , drop = FALSE]
-  write_csv(
-    run_metrics,
-    file.path(MODELS_ROOT, run_metrics$run_id, "metrics.csv")
-  )
+  row <- metrics_per_run[i, , drop = FALSE]
+  write_csv(row, file.path(row$model_dir, "metrics.csv"))
 })
 
 # ------------------------------------------------------------
-# 4) Manifest global de modelos (dataset + métricas)
+# 5) Manifest global de modelos (dataset × cv_scheme)
 # ------------------------------------------------------------
 
 models_manifest <- datasets_manifest |>
-  left_join(metrics_per_run, by = "run_id") |>
-  mutate(model_dir = file.path(MODELS_ROOT, run_id))
+  inner_join(metrics_per_run, by = "run_id")
 
 write_csv(models_manifest, file.path(MODELS_ROOT, "manifest.csv"))
 
 # ------------------------------------------------------------
-# 5) Tabla resumen lista para mostrar (Rmd la levanta tal cual)
+# 6) Tabla resumen y plots comparativos
 # ------------------------------------------------------------
 
 summary_table <- models_manifest |>
@@ -113,46 +192,65 @@ summary_table <- models_manifest |>
                          paste0("BG = ", bp_n),
                          "BG = n presencias")
   ) |>
-  select(run_id, species, bias_label, bp_label,
+  select(run_id, cv_scheme, species, bias_label, bp_label,
          n_train_pres, n_test_pres, n_train_bg, n_test_bg,
          auc_test, threshold_max_tss, sensitivity, specificity,
-         tss, fnr, train_secs) |>
-  arrange(desc(tss))
+         tss, fnr, boyce, train_secs) |>
+  arrange(cv_scheme, desc(tss))
 
 write_csv(summary_table, file.path(MODELS_ROOT, "summary_table.csv"))
 
-# ------------------------------------------------------------
-# 6) Plots resumen pre-renderizados
-# ------------------------------------------------------------
-
-# 6a) AUC por configuración (informativo, no se usa para selección)
+# 6a) AUC por configuración, faceteado por cv_scheme
 auc_plot <- summary_table |>
   ggplot(aes(x = bias_label, y = auc_test, fill = bp_label)) +
   geom_col(position = position_dodge(width = 0.8), width = 0.7) +
   geom_hline(yintercept = 0.5, linetype = "dashed", color = "grey40") +
-  facet_wrap(~ species) +
+  facet_grid(cv_scheme ~ species) +
   labs(x = "Corrección de sesgo espacial",
        y = "AUC (test)",
        fill = "Background points",
-       title = "Comparación de AUC por configuración (informativo)") +
-  theme_minimal()
+       title = "AUC por configuración — holdout vs spatial-block CV") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 20, hjust = 1))
 
-ggsave(
-  filename = file.path(MODELS_ROOT, "auc_comparison.png"),
-  plot     = auc_plot,
-  width    = 9, height = 5, dpi = 120
-)
+ggsave(file.path(MODELS_ROOT, "auc_comparison.png"),
+       auc_plot, width = 10, height = 6, dpi = 120)
 
-# 6b) Evaluación dual: TSS vs FNR (criterio de selección Miyaji)
+# 6b) TSS vs FNR (criterio Miyaji), faceteado por cv_scheme
 dual_plot <- summary_table |>
   mutate(config_label = paste(bias_label, bp_label, sep = " | ")) |>
-  make_dual_metrics_plot(label_var = "config_label")
+  ggplot(aes(x = fnr, y = tss, color = bias_label, shape = bp_label)) +
+  geom_point(size = 3, alpha = 0.85) +
+  geom_text(aes(label = config_label), size = 2.5, vjust = -0.9, show.legend = FALSE) +
+  facet_wrap(~ cv_scheme) +
+  scale_x_continuous(limits = c(0, 1)) +
+  scale_y_continuous(limits = c(0, 1)) +
+  labs(x = "FNR  (menor es mejor)",
+       y = "TSS  (mayor es mejor)",
+       title = "TSS vs FNR — holdout vs spatial-block CV",
+       subtitle = "Cuadrante sup-izq: consistente y discriminatorio") +
+  theme_minimal(base_size = 11) +
+  theme(legend.position = "bottom")
 
-ggsave(
-  filename = file.path(MODELS_ROOT, "dual_metrics_comparison.png"),
-  plot     = dual_plot,
-  width    = 9, height = 6, dpi = 120
-)
+ggsave(file.path(MODELS_ROOT, "dual_metrics_comparison.png"),
+       dual_plot, width = 11, height = 6, dpi = 120)
+
+# 6c) Comparación de ranking holdout vs spatial_block
+#     (mismo dataset, columna por métrica)
+rank_compare <- summary_table |>
+  group_by(cv_scheme) |>
+  mutate(rank_tss = rank(-tss, ties.method = "min")) |>
+  ungroup() |>
+  select(run_id, cv_scheme, rank_tss, tss, fnr, boyce) |>
+  tidyr::pivot_wider(
+    names_from = cv_scheme,
+    values_from = c(rank_tss, tss, fnr, boyce),
+    names_glue = "{.value}_{cv_scheme}"
+  ) |>
+  arrange(rank_tss_spatial_block)
+
+write_csv(rank_compare, file.path(MODELS_ROOT, "rank_compare_holdout_vs_block.csv"))
 
 message("OK. Outputs en: ", MODELS_ROOT)
 print(summary_table)
+print(rank_compare)
