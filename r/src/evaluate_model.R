@@ -72,11 +72,61 @@ compute_dual_metrics <- function(y, scores) {
 }
 
 # ------------------------------------------------------------
-# 2) PER-RUN EVALUATION
+# 2) CONTINUOUS BOYCE INDEX (Hirzel et al. 2006)
+# ------------------------------------------------------------
+#
+# Métrica recomendada para datos de solo presencia: mide la
+# correlación monótona entre el score predicho y la frecuencia
+# observada de presencias relativa a la disponibilidad
+# ambiental (aproximada acá por los puntos de background).
+#
+# Procedimiento (ventana móvil sobre [s_min, s_max]):
+#   1. Bins con ancho window_width * (s_max - s_min).
+#   2. Por bin i: F_i = (frac presencias en bin) / (frac BG en bin).
+#   3. Devuelve Spearman ρ entre midpoint del bin y F_i,
+#      ignorando bins sin disponibilidad (F_i = NA o Inf).
+#
+# Rango: [-1, 1]. Modelo "trivial" (score constante) ⇒ NA.
+# ------------------------------------------------------------
+
+compute_boyce <- function(scores_pres,
+                          scores_bg,
+                          n_bins       = 101L,
+                          window_width = 0.1) {
+  stopifnot(length(scores_pres) > 0, length(scores_bg) > 0,
+            window_width > 0, window_width < 1)
+
+  s_min <- min(c(scores_pres, scores_bg), na.rm = TRUE)
+  s_max <- max(c(scores_pres, scores_bg), na.rm = TRUE)
+  if (!is.finite(s_min) || !is.finite(s_max) || s_max <= s_min) {
+    return(NA_real_)
+  }
+
+  w <- (s_max - s_min) * window_width
+  midpoints <- seq(s_min + w / 2, s_max - w / 2, length.out = n_bins)
+
+  pe <- vapply(midpoints, function(m) {
+    lo <- m - w / 2
+    hi <- m + w / 2
+    fp <- mean(scores_pres >= lo & scores_pres <= hi)
+    fb <- mean(scores_bg   >= lo & scores_bg   <= hi)
+    if (fb == 0) NA_real_ else fp / fb
+  }, numeric(1))
+
+  ok <- is.finite(pe)
+  if (sum(ok) < 3L) return(NA_real_)
+
+  suppressWarnings(
+    stats::cor(midpoints[ok], pe[ok], method = "spearman")
+  )
+}
+
+# ------------------------------------------------------------
+# 3) PER-RUN EVALUATION
 # ------------------------------------------------------------
 #
 # Reads predictions_test.csv from a single run directory and
-# returns a one-row tibble with run_id + dual metrics.
+# returns a one-row tibble with run_id + dual metrics + Boyce.
 # ------------------------------------------------------------
 
 evaluate_run_dir <- function(run_dir) {
@@ -95,13 +145,18 @@ evaluate_run_dir <- function(run_dir) {
     )
   }
 
-  metrics <- compute_dual_metrics(
-    y      = as.integer(preds$class),
-    scores = as.numeric(preds$score)
+  y <- as.integer(preds$class)
+  s <- as.numeric(preds$score)
+
+  dual <- compute_dual_metrics(y = y, scores = s)
+  boyce <- compute_boyce(
+    scores_pres = s[y == 1L],
+    scores_bg   = s[y == 0L]
   )
 
   tibble(run_id = basename(run_dir)) |>
-    bind_cols(metrics)
+    bind_cols(dual) |>
+    mutate(boyce = boyce)
 }
 
 # ------------------------------------------------------------
@@ -129,7 +184,8 @@ evaluate_all_runs <- function(out_root) {
       sensitivity       = numeric(),
       specificity       = numeric(),
       tss               = numeric(),
-      fnr               = numeric()
+      fnr               = numeric(),
+      boyce             = numeric()
     ))
   }
 
