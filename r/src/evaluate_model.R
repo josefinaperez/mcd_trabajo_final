@@ -125,8 +125,10 @@ compute_boyce <- function(scores_pres,
 # 3) PER-RUN EVALUATION
 # ------------------------------------------------------------
 #
-# Reads predictions_test.csv from a single run directory and
-# returns a one-row tibble with run_id + dual metrics + Boyce.
+# Lee predictions_test.csv en un directorio cualquiera y
+# devuelve un único tibble de métricas duales + Boyce. No
+# añade run_id ni cv_scheme: el caller los agrega externamente
+# desde el manifest (separa parsing de paths de cómputo).
 # ------------------------------------------------------------
 
 evaluate_run_dir <- function(run_dir) {
@@ -154,42 +156,7 @@ evaluate_run_dir <- function(run_dir) {
     scores_bg   = s[y == 0L]
   )
 
-  tibble(run_id = basename(run_dir)) |>
-    bind_cols(dual) |>
-    mutate(boyce = boyce)
-}
-
-# ------------------------------------------------------------
-# 3) BATCH EVALUATION OVER A MODELS ROOT
-# ------------------------------------------------------------
-#
-# Walks the immediate subdirectories of out_root, evaluating
-# every one that contains a predictions_test.csv. Returns a
-# tibble with one row per run_id.
-# ------------------------------------------------------------
-
-evaluate_all_runs <- function(out_root) {
-  if (!dir.exists(out_root)) {
-    stop("evaluate_all_runs: directory not found: ", out_root)
-  }
-
-  run_dirs <- list.dirs(out_root, full.names = TRUE, recursive = FALSE)
-  run_dirs <- run_dirs[file.exists(file.path(run_dirs, "predictions_test.csv"))]
-
-  if (length(run_dirs) == 0) {
-    warning("evaluate_all_runs: no run directories with predictions_test.csv found in ", out_root)
-    return(tibble(
-      run_id            = character(),
-      threshold_max_tss = numeric(),
-      sensitivity       = numeric(),
-      specificity       = numeric(),
-      tss               = numeric(),
-      fnr               = numeric(),
-      boyce             = numeric()
-    ))
-  }
-
-  purrr::map_dfr(run_dirs, evaluate_run_dir)
+  dual |> mutate(boyce = boyce)
 }
 
 # ------------------------------------------------------------
