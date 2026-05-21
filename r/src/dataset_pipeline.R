@@ -80,11 +80,31 @@ species_table <- tibble::tibble(
   occ_file = paste0("df_", slug(species_config$scientific_name), ".csv")
 )
 
+bioclim_files <- list.files("data/features/worldclim/wc2.1_30s_bio", full.names = TRUE)
+
 env_sets <- list(
-  bioclim_30s = list(
-    files = list.files("data/features/worldclim/wc2.1_30s_bio", full.names = TRUE)
-  )
+  bioclim_30s = list(files = bioclim_files)
 )
+
+# Si existe selección de variables (env_selection_pipeline.R), registrar
+# bioclim_30s_reduced como env_set adicional con el subset no colineal.
+selected_vars_path <- "data/outputs/env_selection/selected_vars.csv"
+if (file.exists(selected_vars_path)) {
+  selected_vars <- readr::read_csv(selected_vars_path, show_col_types = FALSE) |>
+    dplyr::filter(status == "kept") |>
+    dplyr::pull(variable)
+  reduced_files <- bioclim_files[
+    tools::file_path_sans_ext(basename(bioclim_files)) %in% selected_vars
+  ]
+  if (length(reduced_files) == length(selected_vars)) {
+    env_sets$bioclim_30s_reduced <- list(files = reduced_files)
+    message(sprintf("env_sets: bioclim_30s_reduced registrado con %d variables.",
+                    length(reduced_files)))
+  } else {
+    warning("selected_vars.csv presente pero no coincide con archivos del raster. ",
+            "Se omite bioclim_30s_reduced.")
+  }
+}
 
 fixed_bp_n <- 10000L
 
@@ -93,7 +113,7 @@ config_table <- make_config_table(
   bp_methods      = c("random"),
   bp_n_strategies = c("fixed", "match_presence"),
   fixed_bp_n      = fixed_bp_n,
-  env_sets        = c("bioclim_30s"),
+  env_sets        = names(env_sets),
   grid_sizes_km   = c(10, 50)
 )
 

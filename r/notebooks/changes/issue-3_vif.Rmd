@@ -1,0 +1,133 @@
+---
+title: "Issue #3 — Reducción de colinealidad por correlación (|r| > 0,7)"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, message = FALSE, warning = FALSE)
+suppressPackageStartupMessages({
+  library(readr)
+  library(dplyr)
+  library(tidyr)
+  library(ggplot2)
+  library(knitr)
+})
+```
+
+> Notebook **display-only** asociado al issue #3. Compara el estado de los
+> modelos **antes** (snapshot `_snapshots/issue-3_pre/`) y **después** de
+> introducir el `env_set` `bioclim_30s_reduced` (subset de 7 variables BIO
+> no colineales seleccionadas con `r/src/env_selection_pipeline.R`).
+
+```{r paths}
+MODELS_ROOT  <- "../../data/outputs/sdm_models"
+SNAP_ROOT    <- file.path(MODELS_ROOT, "_snapshots/issue-3_pre")
+SELECT_ROOT  <- "../../data/outputs/env_selection"
+
+now_manifest <- read_csv(file.path(MODELS_ROOT, "manifest.csv"), show_col_types = FALSE)
+now_summary  <- read_csv(file.path(MODELS_ROOT, "summary_table.csv"), show_col_types = FALSE)
+pre_manifest <- read_csv(file.path(SNAP_ROOT,   "manifest.csv"), show_col_types = FALSE)
+pre_summary  <- read_csv(file.path(SNAP_ROOT,   "summary_table.csv"), show_col_types = FALSE)
+sel_vars     <- read_csv(file.path(SELECT_ROOT, "selected_vars.csv"), show_col_types = FALSE)
+```
+
+## 1. Variables seleccionadas
+
+```{r selected}
+sel_vars |>
+  arrange(status, variable) |>
+  kable(caption = "Variables BIO conservadas y descartadas por |r| > 0.7 (Dormann 2013).")
+```
+
+```{r heatmap, fig.cap="Matriz de correlación pairwise sobre presencias ∪ background del run de referencia."}
+include_graphics(file.path(SELECT_ROOT, "corr_heatmap.png"))
+```
+
+## 2. Sanity check: configs originales son idénticas
+
+Los 6 `run_id` que ya existían antes del cambio deberían arrojar métricas
+idénticas (el pipeline es determinístico con `seed = 42`).
+
+```{r sanity}
+metric_cols <- c("auc_test", "tss", "boyce", "sensitivity", "specificity")
+common <- inner_join(
+  pre_manifest |> select(run_id, cv_scheme, all_of(metric_cols)) |>
+    rename_with(~paste0(.x, "_pre"), all_of(metric_cols)),
+  now_manifest |> select(run_id, cv_scheme, all_of(metric_cols)),
+  by = c("run_id", "cv_scheme")
+)
+
+diff_table <- common |>
+  mutate(across(all_of(metric_cols),
+                ~ .x - get(paste0(cur_column(), "_pre")),
+                .names = "delta_{.col}")) |>
+  select(run_id, cv_scheme, starts_with("delta_"))
+
+diff_table |>
+  summarise(across(starts_with("delta_"), ~ max(abs(.x), na.rm = TRUE))) |>
+  pivot_longer(everything(), names_to = "métrica", values_to = "max |Δ|") |>
+  kable(digits = 6, caption = "Máxima desviación absoluta entre snapshot y corrida actual sobre run_ids comunes.")
+```
+
+## 3. Ranking antes vs después
+
+```{r ranking}
+rank_pre <- pre_manifest |>
+  arrange(cv_scheme, desc(tss)) |>
+  group_by(cv_scheme) |>
+  mutate(rank_pre = row_number()) |>
+  ungroup() |>
+  select(run_id, cv_scheme, rank_pre, tss_pre = tss, auc_pre = auc_test, boyce_pre = boyce)
+
+rank_now <- now_manifest |>
+  arrange(cv_scheme, desc(tss)) |>
+  group_by(cv_scheme) |>
+  mutate(rank_now = row_number()) |>
+  ungroup() |>
+  select(run_id, cv_scheme, rank_now, tss_now = tss, auc_now = auc_test, boyce_now = boyce, env_set)
+
+full_join(rank_pre, rank_now, by = c("run_id", "cv_scheme")) |>
+  arrange(cv_scheme, rank_now) |>
+  mutate(`Δ rank` = rank_pre - rank_now) |>
+  kable(digits = 3,
+        caption = "Ranking por TSS dentro de cada CV scheme (NA en rank_pre = config nueva con env reducido).")
+```
+
+## 4. Ganador por CV scheme
+
+```{r winners}
+now_manifest |>
+  group_by(cv_scheme) |>
+  slice_max(tss, n = 1, with_ties = FALSE) |>
+  ungroup() |>
+  select(cv_scheme, run_id, env_set, auc_test, tss, boyce, sensitivity, specificity) |>
+  kable(digits = 3,
+        caption = "Mejor configuración por CV scheme (post-cambio).")
+
+pre_manifest |>
+  group_by(cv_scheme) |>
+  slice_max(tss, n = 1, with_ties = FALSE) |>
+  ungroup() |>
+  select(cv_scheme, run_id, auc_test, tss, boyce) |>
+  kable(digits = 3,
+        caption = "Mejor configuración por CV scheme (snapshot previo).")
+```
+
+## 5. Comparación visual
+
+```{r plots}
+include_graphics(file.path(MODELS_ROOT, "auc_comparison.png"))
+include_graphics(file.path(MODELS_ROOT, "dual_metrics_comparison.png"))
+```
+
+## 6. Interpretación
+
+- **Sanity.** Los `run_id` heredados reproducen las métricas del snapshot (Δ máximo ≈ 0), confirmando que el cambio no contamina los baselines (sección 2).
+- **El ganador no cambia.** En ambos esquemas de CV el mejor sigue siendo un config con las 19 BIO:
+  - `holdout`: `bias-none + bpn=fixed_10000 + bioclim_30s` — TSS 0,757 / Boyce 0,992.
+  - `spatial_block`: `bias-none + bpn=match_presence + bioclim_30s` — TSS 0,688 / Boyce 0,907.
+- **Costo modesto del subset reducido.** Las contrapartes con `bioclim_30s_reduced` quedan 1–2 puestos por debajo de su análogo con 19 BIO:
+  - `holdout`: ΔTSS ≈ -0,017, ΔAUC ≈ -0,009, ΔBoyce ≈ -0,008.
+  - `spatial_block`: ΔTSS ≈ -0,007, ΔAUC ≈ -0,011, ΔBoyce ≈ -0,035.
+- **Beneficio relativo a la corrección de sesgo.** Bajo `spatial_block`, los 4 primeros del ranking son todos `bias-none` (2 con 19 BIO, 2 con el reducido). Las configs reducidas se intercalan **antes** de cualquier config con `grid_thin`: la pérdida por desinflar colinealidad es menor que la pérdida por aplicar thinning agresivo.
+- **Implicancia para Etapa 4.** El subset de 7 BIO (BIO2 — rango térmico diurno, BIO3 — isotermalidad, BIO4 — estacionalidad térmica, BIO9 — temperatura del cuarto seco, BIO11 — temperatura del cuarto frío, BIO15 — estacionalidad de precipitación, BIO19 — precipitación del cuarto frío) cubre ejes ortogonales del clima argentino. Al cierre del informe se mantiene el ganador con 19 BIO como referencia para Etapa 3 (mapas), pero el análisis XAI se replica sobre el ganador reducido para evitar que la atribución SHAP/LIME se reparta entre variables redundantes.
