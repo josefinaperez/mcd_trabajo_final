@@ -30,11 +30,19 @@ DATASETS_ROOT <- "data/outputs/sdm_parallel"
 MAPS_ROOT     <- "data/outputs/sdm_maps"
 XAI_ROOT      <- "data/outputs/sdm_xai"
 
-# Runs a explicar (ganador + contraste); roles documentados.
+# Runs a explicar: ganadores por CV scheme (con y sin reducción de
+# colinealidad) + contraste de corrección de sesgo. El par
+# (run_id, cv_scheme) determina de qué subcarpeta del modelo se
+# lee model.rds y predictions_test.csv. Los roles determinan
+# is_winner en el manifest y el etiquetado de figuras del
+# notebook display-only.
 XAI_RUNS_TO_EXPLAIN <- tibble::tribble(
-  ~run_id,                                                                                ~role,
-  "polyporaceae__bias-none__bp-random__bpn-fixed_10000__env-bioclim_30s",                 "winner",
-  "polyporaceae__bias-grid_thin__p10__bp-random__bpn-fixed_10000__env-bioclim_30s",       "contrast_grid_thin_p10"
+  ~run_id,                                                                                          ~cv_scheme,      ~role,
+  "polyporaceae__bias-none__bp-random__bpn-fixed_10000__env-bioclim_30s",                           "holdout",       "winner_holdout",
+  "polyporaceae__bias-none__bp-random__bpn-fixed_10000__env-bioclim_30s_reduced",                   "holdout",       "winner_holdout_reduced",
+  "polyporaceae__bias-none__bp-random__bpn-match_presence__env-bioclim_30s",                        "spatial_block", "winner_spatial_block",
+  "polyporaceae__bias-none__bp-random__bpn-match_presence__env-bioclim_30s_reduced",                "spatial_block", "winner_spatial_block_reduced",
+  "polyporaceae__bias-grid_thin__p10__bp-random__bpn-fixed_10000__env-bioclim_30s",                 "holdout",       "contrast_grid_thin_p10"
 )
 
 # Puntos críticos de LIME por especie.
@@ -67,14 +75,14 @@ species_from_run_id <- function(run_id) {
 # Devuelve una fila del manifest.
 # ------------------------------------------------------------
 
-explain_one_run <- function(run_id, role, env_stack,
+explain_one_run <- function(run_id, cv_scheme, role, env_stack,
                             models_root   = MODELS_ROOT,
                             datasets_root = DATASETS_ROOT,
                             xai_root      = XAI_ROOT) {
-  message("=== Explaining ", run_id, " (", role, ")")
+  message("=== Explaining ", run_id, " / ", cv_scheme, " (", role, ")")
 
-  model_path  <- file.path(models_root,   run_id, "model.rds")
-  preds_path  <- file.path(models_root,   run_id, "predictions_test.csv")
+  model_path  <- file.path(models_root,   run_id, cv_scheme, "model.rds")
+  preds_path  <- file.path(models_root,   run_id, cv_scheme, "predictions_test.csv")
   ds_path     <- file.path(datasets_root, run_id, "sdm_dataset_model_ready.csv")
   stopifnot(file.exists(model_path), file.exists(preds_path), file.exists(ds_path))
 
@@ -82,9 +90,9 @@ explain_one_run <- function(run_id, role, env_stack,
   preds <- readr::read_csv(preds_path, show_col_types = FALSE)
   ds    <- readr::read_csv(ds_path,    show_col_types = FALSE)
   pred_cols <- grep("^wc2.1_30s_bio_", names(ds), value = TRUE)
-  stopifnot(length(pred_cols) == 19L)
+  stopifnot(length(pred_cols) >= 1L)
 
-  run_dir <- file.path(xai_root, run_id)
+  run_dir <- file.path(xai_root, run_id, cv_scheme)
   dir.create(run_dir, recursive = TRUE, showWarnings = FALSE)
 
   # ---- SHAP ----
@@ -116,7 +124,7 @@ explain_one_run <- function(run_id, role, env_stack,
          p_shap, width = 11, height = 6, dpi = 150)
 
   # ---- PDP ----
-  message("  PDP: 19 vars × grid=", PDP_GRID_RES)
+  message("  PDP: ", length(pred_cols), " vars × grid=", PDP_GRID_RES)
   X_train <- ds |> dplyr::select(dplyr::all_of(pred_cols))
   pdp_df  <- compute_pdp(model, X_train, predictors = pred_cols,
                          grid_resolution = PDP_GRID_RES)
@@ -150,8 +158,9 @@ explain_one_run <- function(run_id, role, env_stack,
   # ---- Manifest row ----
   tibble::tibble(
     run_id            = run_id,
+    cv_scheme         = cv_scheme,
     role              = role,
-    is_winner         = role == "winner",
+    is_winner         = startsWith(role, "winner_"),
     shap_path         = normalizePath(file.path(run_dir, "shap_values.csv"),         mustWork = TRUE),
     importance_path   = normalizePath(file.path(run_dir, "importance_ranking.csv"),  mustWork = TRUE),
     pdp_long_path     = normalizePath(file.path(run_dir, "pdp_long.csv"),            mustWork = TRUE),
@@ -180,11 +189,11 @@ main <- function() {
   set.seed(42)
   env <- load_env_stack()
 
-  rows <- purrr::pmap(XAI_RUNS_TO_EXPLAIN, function(run_id, role) {
+  rows <- purrr::pmap(XAI_RUNS_TO_EXPLAIN, function(run_id, cv_scheme, role) {
     tryCatch(
-      explain_one_run(run_id, role, env_stack = env),
+      explain_one_run(run_id, cv_scheme, role, env_stack = env),
       error = function(e) {
-        message("ERROR explicando ", run_id, ": ", conditionMessage(e))
+        message("ERROR explicando ", run_id, " / ", cv_scheme, ": ", conditionMessage(e))
         NULL
       }
     )
@@ -195,7 +204,7 @@ main <- function() {
   }
 
   manifest <- rows |>
-    dplyr::relocate(run_id, is_winner, role,
+    dplyr::relocate(run_id, cv_scheme, is_winner, role,
                     n_explained_shap, n_explained_lime)
   readr::write_csv(manifest, file.path(XAI_ROOT, "manifest.csv"))
 
