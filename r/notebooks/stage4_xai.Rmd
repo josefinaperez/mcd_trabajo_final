@@ -19,85 +19,84 @@ manifest <- readr::read_csv(file.path(XAI_ROOT, "manifest.csv"),
 
 # Resumen
 
-Esta etapa interpreta las predicciones del modelo ganador (`bias = none`, `BG = 10000`) y de un modelo de contraste con corrección de sesgo (`grid_thin p10`) usando tres técnicas:
+Esta etapa interpreta las predicciones del **ganador hold-out** (`bias = none`, `BG = 10000`) y de un modelo de contraste con corrección de sesgo (`grid_thin p10`) usando tres técnicas:
 
 - **SHAP** (KernelSHAP) para importancia global y dirección de cada predictor.
 - **PDP** para la forma funcional de la respuesta especie-ambiente.
 - **LIME** sobre 8 puntos locales (presencias top/bottom del score + Yungas + Patagonia) para validar consistencia local.
 
+El ganador spatial-block (`bpn = match_presence`) se trata como contraste de CV en `r/notebooks/changes/issue-4_winner_spatial_block.Rmd`; las filas correspondientes también están en el manifest.
+
 ```{r manifest-table}
 manifest |>
-  dplyr::select(run_id, role, n_explained_shap, n_explained_lime) |>
+  dplyr::select(run_id, cv_scheme, role, n_explained_shap, n_explained_lime) |>
   knitr::kable(caption = "Runs explicados")
+```
+
+```{r helpers}
+xai_dir <- function(rid, cv) file.path(XAI_ROOT, rid, cv)
+row_for <- function(role_name) manifest |> dplyr::filter(role == role_name) |> head(1)
+winner_row   <- row_for("winner_holdout")
+contrast_row <- row_for("contrast_grid_thin_p10")
 ```
 
 # Ranking de importancia (SHAP)
 
 ```{r importance-side-by-side}
-imp_winner <- readr::read_csv(manifest$importance_path[manifest$role == "winner"],
+imp_winner <- readr::read_csv(winner_row$importance_path,
                               show_col_types = FALSE) |>
               dplyr::transmute(rank, variable, mean_abs_shap_winner = mean_abs_shap)
 
-imp_contrast <- readr::read_csv(manifest$importance_path[manifest$role == "contrast_grid_thin_p10"],
+imp_contrast <- readr::read_csv(contrast_row$importance_path,
                                 show_col_types = FALSE) |>
                 dplyr::transmute(variable, mean_abs_shap_contrast = mean_abs_shap,
                                  rank_contrast = rank)
 
 dplyr::full_join(imp_winner, imp_contrast, by = "variable") |>
   dplyr::arrange(rank) |>
-  knitr::kable(digits = 4, caption = "Importancia global comparada")
+  knitr::kable(digits = 4, caption = "Importancia global comparada (ganador hold-out vs grid_thin p10)")
 ```
 
 # SHAP summary plots
 
-## Ganador
+## Ganador hold-out
 
 ```{r shap-winner, out.width="100%"}
-knitr::include_graphics(file.path(XAI_ROOT,
-  manifest$run_id[manifest$role == "winner"],
-  "shap_summary.png"))
+knitr::include_graphics(file.path(xai_dir(winner_row$run_id, winner_row$cv_scheme),
+                                  "shap_summary.png"))
 ```
 
 ## Contraste (grid_thin p10)
 
 ```{r shap-contrast, out.width="100%"}
-knitr::include_graphics(file.path(XAI_ROOT,
-  manifest$run_id[manifest$role == "contrast_grid_thin_p10"],
-  "shap_summary.png"))
+knitr::include_graphics(file.path(xai_dir(contrast_row$run_id, contrast_row$cv_scheme),
+                                  "shap_summary.png"))
 ```
 
 # Partial Dependence Plots
 
-## Ganador
+## Ganador hold-out
 
 ```{r pdp-winner, out.width="100%"}
-knitr::include_graphics(file.path(XAI_ROOT,
-  manifest$run_id[manifest$role == "winner"],
-  "pdp_grid.png"))
+knitr::include_graphics(winner_row$pdp_png_path)
 ```
 
 ## Contraste (grid_thin p10)
 
 ```{r pdp-contrast, out.width="100%"}
-knitr::include_graphics(file.path(XAI_ROOT,
-  manifest$run_id[manifest$role == "contrast_grid_thin_p10"],
-  "pdp_grid.png"))
+knitr::include_graphics(contrast_row$pdp_png_path)
 ```
 
 # LIME — explicaciones locales
 
-## Ganador
+## Ganador hold-out
 
 ```{r lime-winner, out.width="100%"}
-knitr::include_graphics(file.path(XAI_ROOT,
-  manifest$run_id[manifest$role == "winner"],
-  "lime_panel.png"))
+knitr::include_graphics(winner_row$lime_panel_path)
 ```
 
 ## Contraste (grid_thin p10)
 
 ```{r lime-contrast, out.width="100%"}
-knitr::include_graphics(file.path(XAI_ROOT,
-  manifest$run_id[manifest$role == "contrast_grid_thin_p10"],
-  "lime_panel.png"))
+knitr::include_graphics(contrast_row$lime_panel_path)
 ```

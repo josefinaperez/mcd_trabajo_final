@@ -20,28 +20,33 @@ winner <- readr::read_csv(file.path(MAPS_ROOT, "winner_summary.csv"),
 knitr::kable(
   winner,
   digits = 4,
-  caption = "Modelo ganador bajo el esquema dual TSS+FNR (τ_FNR principal)."
+  caption = "Modelos ganadores por cv_scheme bajo el esquema dual TSS+FNR (τ_FNR principal)."
 )
 ```
 
-## Mapa de distribución del ganador
+## Mapas de distribución de los ganadores
 
-```{r winner-map, out.width = "100%"}
+```{r winners-maps, out.width = "100%", results = "asis"}
 manifest <- readr::read_csv(file.path(MAPS_ROOT, "manifest.csv"),
                             show_col_types = FALSE)
-winner_png <- manifest |> filter(is_winner) |> pull(png_path)
-knitr::include_graphics(winner_png)
+winners <- manifest |> filter(is_winner) |> arrange(cv_scheme)
+for (i in seq_len(nrow(winners))) {
+  cat("\n\n### ", winners$winner_role[i], " — ", winners$cv_scheme[i],
+      "\n\n", sep = "")
+  cat("![", winners$run_id[i], "](", winners$png_path[i], ")\n", sep = "")
+}
 ```
 
 ## Sobrevivientes del filtro τ_FNR (comparación visual)
 
 ```{r survivors, out.width = "100%", results = "asis"}
-survivors <- manifest |> filter(!is_winner)
+survivors <- manifest |> filter(!is_winner) |> arrange(cv_scheme, run_id)
 if (nrow(survivors) == 0) {
-  cat("_Solo el ganador pasa el filtro principal._")
+  cat("_Solo los ganadores pasan el filtro principal._")
 } else {
   for (i in seq_len(nrow(survivors))) {
-    cat("\n\n### ", survivors$run_id[i], "\n\n", sep = "")
+    cat("\n\n### ", survivors$run_id[i], " — ", survivors$cv_scheme[i],
+        "\n\n", sep = "")
     cat("![", survivors$run_id[i], "](", survivors$png_path[i], ")\n", sep = "")
   }
 }
