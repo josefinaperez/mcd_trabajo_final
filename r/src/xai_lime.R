@@ -19,27 +19,41 @@ suppressPackageStartupMessages({
 })
 
 # ------------------------------------------------------------
-# (1) S3 methods para que lime trate a maxnet como
-#     clasificador binario con dos clases (presence / background).
+# (1) S3 methods para que lime trate a cada modelo como
+#     clasificador binario (presence / background).
 #
 # lime::model_type() y lime::predict_model() son los dos hooks
 # necesarios; predict_model devuelve un data.frame con una
-# columna por clase y probabilidades.
+# columna por clase y probabilidades. Ambos delegan en
+# make_predict_fn() (xai_predict.R), así que el comportamiento
+# es idéntico para maxnet, ranger y xgboost.
 # ------------------------------------------------------------
 
-model_type.maxnet <- function(x, ...) "classification"
-
-predict_model.maxnet <- function(x, newdata, type, ...) {
-  pred <- predict_fn(x, newdata)
+.lime_predict_df <- function(x, newdata) {
+  pred <- make_predict_fn(x)(x, newdata)
   data.frame(presence   = pred,
              background = 1 - pred,
              check.names = FALSE)
 }
 
+model_type.maxnet      <- function(x, ...) "classification"
+model_type.ranger      <- function(x, ...) "classification"
+model_type.xgb.Booster <- function(x, ...) "classification"
+
+predict_model.maxnet      <- function(x, newdata, type, ...) .lime_predict_df(x, newdata)
+predict_model.ranger      <- function(x, newdata, type, ...) .lime_predict_df(x, newdata)
+predict_model.xgb.Booster <- function(x, newdata, type, ...) .lime_predict_df(x, newdata)
+
 # Registrar globalmente para que lime los encuentre vía S3
-# dispatch incluso si no se exporta el namespace.
-.S3method("model_type",    "maxnet", model_type.maxnet)
-.S3method("predict_model", "maxnet", predict_model.maxnet)
+# dispatch incluso si no se exporta el namespace. Sobreescribe
+# cualquier método propio de lime para estas clases, garantizando
+# la normalización a score de presencia en [0, 1].
+.S3method("model_type",    "maxnet",      model_type.maxnet)
+.S3method("model_type",    "ranger",      model_type.ranger)
+.S3method("model_type",    "xgb.Booster", model_type.xgb.Booster)
+.S3method("predict_model", "maxnet",      predict_model.maxnet)
+.S3method("predict_model", "ranger",      predict_model.ranger)
+.S3method("predict_model", "xgb.Booster", predict_model.xgb.Booster)
 
 # ------------------------------------------------------------
 # (2) select_lime_points: arma 8 puntos por run.
