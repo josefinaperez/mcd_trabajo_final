@@ -12,7 +12,7 @@
 #   source("r/src/train_pipeline.R")
 # ============================================================
 
-source("r/src/train_maxent.R")
+source("r/src/train_models.R")
 source("r/src/evaluate_model.R")
 source("r/src/spatial_cv.R")
 
@@ -124,23 +124,25 @@ train_one <- function(i, cv_scheme) {
     ggsave(file.path(fold_plot_dir, "blocks_map.png"), p,
            width = 7, height = 8, dpi = 110)
 
-    run_maxent_for_dataset(
+    run_model_for_dataset(
+      algo      = "maxnet",
       run_id    = run_id,
       dataset_path = dataset_path,
       out_root  = MODELS_ROOT,
       cv_scheme = "spatial_block",
       fold_id   = sb$fold_id,
-      regmult   = REGMULT
+      hp        = list(regmult = REGMULT)
     )
   } else {
-    run_maxent_for_dataset(
+    run_model_for_dataset(
+      algo      = "maxnet",
       run_id    = run_id,
       dataset_path = dataset_path,
       out_root  = MODELS_ROOT,
       cv_scheme = "holdout",
       p_train   = P_TRAIN,
       seed      = SEED,
-      regmult   = REGMULT
+      hp        = list(regmult = REGMULT)
     )
   }
 }

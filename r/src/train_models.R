@@ -1,9 +1,15 @@
 # ============================================================
-# File: train_maxent.R
-# Purpose: Train MaxEnt (maxnet) on a model-ready SDM dataset
-#          and persist artifacts (model, test predictions,
-#          metrics, response curves).
+# File: train_models.R
+# Purpose: Entrenar un SDM sobre un dataset model-ready y persistir
+#          artefactos (modelo, predicciones test, métricas, curvas
+#          de respuesta). Agnóstico al algoritmo: maxnet, ranger
+#          (Random Forest) y xgboost comparten la misma lógica de
+#          holdout y spatial-block CV; lo único que cambia es
+#          fit_model() (entrenamiento) y la predicción, que se
+#          delega en make_predict_fn() de xai_predict.R.
 # ============================================================
+
+source("r/src/xai_predict.R")  # make_predict_fn (score de presencia [0,1])
 
 suppressPackageStartupMessages({
   library(readr)
@@ -18,6 +24,16 @@ suppressPackageStartupMessages({
 
 COORD_COLS <- c("decimalLongitude", "decimalLatitude")
 CLASS_COL  <- "class"
+
+# Hiperparámetros por defecto por algoritmo. NULL = dejar el
+# default de la librería. fit_model() mergea `hp` sobre estos.
+ALGO_DEFAULTS <- list(
+  maxnet  = list(regmult = 1, classes = NULL),
+  ranger  = list(num.trees = 1000L, mtry = NULL, min.node.size = NULL),
+  xgboost = list(nrounds = 300L, max_depth = 4L,
+                 learning_rate = 0.1, min_child_weight = 1)
+)
+SUPPORTED_ALGOS <- names(ALGO_DEFAULTS)
 
 # ------------------------------------------------------------
 # 1) DATA LOADING
@@ -84,19 +100,42 @@ stratified_split <- function(y, p_train = 0.7, seed = 42) {
 # 3) TRAIN / PREDICT
 # ------------------------------------------------------------
 
-train_maxnet <- function(X_train, y_train, regmult = 1, classes = NULL) {
-  args <- list(
-    p       = y_train,
-    data    = as.data.frame(X_train),
-    regmult = regmult
-  )
-  if (!is.null(classes)) args$classes <- classes
+# fit_model: entrena `algo` sobre (X, y) con hiperparámetros `hp`
+# (mergeados sobre ALGO_DEFAULTS). Devuelve el objeto nativo de
+# cada librería; su clase guía a make_predict_fn() y a LIME.
+fit_model <- function(algo, X, y, hp = list(), seed = 42) {
+  algo <- match.arg(algo, SUPPORTED_ALGOS)
+  hp   <- utils::modifyList(ALGO_DEFAULTS[[algo]], hp)
 
-  do.call(maxnet::maxnet, args)
+  if (algo == "maxnet") {
+    args <- list(p = y, data = as.data.frame(X), regmult = hp$regmult)
+    if (!is.null(hp$classes)) args$classes <- hp$classes
+    do.call(maxnet::maxnet, args)
+
+  } else if (algo == "ranger") {
+    if (!requireNamespace("ranger", quietly = TRUE)) stop("falta el paquete 'ranger'")
+    df <- as.data.frame(X)
+    df[[".class"]] <- factor(y, levels = c(0L, 1L))
+    do.call(ranger::ranger, c(
+      list(formula = stats::as.formula(".class ~ ."),
+           data = df, probability = TRUE, seed = seed),
+      Filter(Negate(is.null), hp)
+    ))
+
+  } else { # xgboost: y factor dispara clasificación; predict -> P(clase "1")
+    if (!requireNamespace("xgboost", quietly = TRUE)) stop("falta el paquete 'xgboost'")
+    do.call(xgboost::xgboost, c(
+      list(x = as.matrix(X), y = factor(y, levels = c(0L, 1L)),
+           objective = "binary:logistic", seed = seed, verbosity = 0L),
+      Filter(Negate(is.null), hp)
+    ))
+  }
 }
 
-predict_maxnet <- function(model, X, type = "cloglog") {
-  as.numeric(predict(model, newdata = as.data.frame(X), type = type, clamp = TRUE))
+# predict_score: probabilidad de presencia ∈ [0,1] para cualquier
+# algoritmo, vía el factory de xai_predict.R.
+predict_score <- function(model, X) {
+  make_predict_fn(model)(model, as.data.frame(X))
 }
 
 # ------------------------------------------------------------
@@ -147,7 +186,7 @@ extract_response_curves <- function(model, X_train, n_points = 100) {
     tibble(
       variable = var,
       value    = grid,
-      score    = predict_maxnet(model, newdata)
+      score    = predict_score(model, newdata)
     )
   })
 }
@@ -164,7 +203,7 @@ plot_response_curves <- function(curves_df) {
   ggplot(curves_df, aes(x = value, y = score)) +
     geom_line(color = "#2c7fb8", linewidth = 0.6) +
     facet_wrap(~ variable, scales = "free_x") +
-    labs(x = "Variable value", y = "Predicted suitability (cloglog)") +
+    labs(x = "Variable value", y = "Predicted suitability") +
     theme_minimal(base_size = 9)
 }
 
@@ -216,13 +255,13 @@ save_model_artifacts <- function(run_id,
 # 7) ONE-SHOT WRAPPER (holdout)
 # ------------------------------------------------------------
 
-run_maxent_holdout <- function(run_id,
-                               ds,
-                               out_root,
-                               p_train = 0.7,
-                               seed    = 42,
-                               regmult = 1,
-                               classes = NULL) {
+run_model_holdout <- function(algo,
+                              run_id,
+                              ds,
+                              out_root,
+                              p_train = 0.7,
+                              seed    = 42,
+                              hp      = list()) {
   split <- stratified_split(ds$y, p_train = p_train, seed = seed)
 
   X_train <- ds$X |> slice(split$train)
@@ -231,10 +270,10 @@ run_maxent_holdout <- function(run_id,
   y_test  <- ds$y[split$test]
 
   t0 <- Sys.time()
-  model <- train_maxnet(X_train, y_train, regmult = regmult, classes = classes)
+  model <- fit_model(algo, X_train, y_train, hp = hp, seed = seed)
   train_secs <- as.numeric(difftime(Sys.time(), t0, units = "secs"))
 
-  scores_test <- predict_maxnet(model, X_test)
+  scores_test <- predict_score(model, X_test)
 
   predictions_test <- ds$coords |>
     slice(split$test) |>
@@ -242,6 +281,7 @@ run_maxent_holdout <- function(run_id,
 
   metrics <- compute_basic_metrics(y_train, y_test, scores_test) |>
     mutate(run_id    = run_id,
+           algorithm = algo,
            cv_scheme = "holdout",
            train_secs = train_secs,
            .before    = 1)
@@ -277,12 +317,13 @@ run_maxent_holdout <- function(run_id,
 # evaluate_run_dir() leyendo predictions_test.csv pooled.
 # ------------------------------------------------------------
 
-run_maxent_spatial_block <- function(run_id,
-                                     ds,
-                                     fold_id,
-                                     out_root,
-                                     regmult = 1,
-                                     classes = NULL) {
+run_model_spatial_block <- function(algo,
+                                    run_id,
+                                    ds,
+                                    fold_id,
+                                    out_root,
+                                    seed = 42,
+                                    hp   = list()) {
   stopifnot(length(fold_id) == length(ds$y))
   k <- max(fold_id)
 
@@ -299,13 +340,13 @@ run_maxent_spatial_block <- function(run_id,
       return(NULL)
     }
 
-    model_f <- train_maxnet(
+    model_f <- fit_model(
+      algo,
       ds$X[train_mask, , drop = FALSE],
       ds$y[train_mask],
-      regmult = regmult,
-      classes = classes
+      hp = hp, seed = seed
     )
-    scores_f <- predict_maxnet(model_f, ds$X[test_mask, , drop = FALSE])
+    scores_f <- predict_score(model_f, ds$X[test_mask, , drop = FALSE])
 
     fold_basic <- compute_basic_metrics(
       ds$y[train_mask],
@@ -331,7 +372,7 @@ run_maxent_spatial_block <- function(run_id,
   fold_metrics <- bind_rows(purrr::map(fold_results, "metrics"))
 
   # Modelo final refit-on-all para downstream (mapping/XAI/response curves).
-  refit <- train_maxnet(ds$X, ds$y, regmult = regmult, classes = classes)
+  refit <- fit_model(algo, ds$X, ds$y, hp = hp, seed = seed)
   curves <- extract_response_curves(refit, ds$X)
 
   train_secs <- as.numeric(difftime(Sys.time(), t0, units = "secs"))
@@ -349,6 +390,7 @@ run_maxent_spatial_block <- function(run_id,
 
   metrics <- tibble(
     run_id       = run_id,
+    algorithm    = algo,
     cv_scheme    = "spatial_block",
     train_secs   = train_secs,
     n_train_pres = sum(ds$y == 1L),  # refit-on-all
@@ -384,32 +426,31 @@ run_maxent_spatial_block <- function(run_id,
 # 9) ENTRY POINT
 # ------------------------------------------------------------
 
-run_maxent_for_dataset <- function(run_id,
-                                   dataset_path,
-                                   out_root,
-                                   cv_scheme = c("holdout", "spatial_block"),
-                                   fold_id   = NULL,
-                                   p_train   = 0.7,
-                                   seed      = 42,
-                                   regmult   = 1,
-                                   classes   = NULL) {
+run_model_for_dataset <- function(algo,
+                                  run_id,
+                                  dataset_path,
+                                  out_root,
+                                  cv_scheme = c("holdout", "spatial_block"),
+                                  fold_id   = NULL,
+                                  p_train   = 0.7,
+                                  seed      = 42,
+                                  hp        = list()) {
   cv_scheme <- match.arg(cv_scheme)
   ds <- load_model_ready_dataset(dataset_path)
 
   if (cv_scheme == "holdout") {
-    run_maxent_holdout(
-      run_id  = run_id, ds = ds, out_root = out_root,
-      p_train = p_train, seed = seed,
-      regmult = regmult, classes = classes
+    run_model_holdout(
+      algo = algo, run_id = run_id, ds = ds, out_root = out_root,
+      p_train = p_train, seed = seed, hp = hp
     )
   } else {
     if (is.null(fold_id)) {
       stop("cv_scheme = 'spatial_block' requiere `fold_id` precomputado ",
            "(usar spatial_cv.R::assign_spatial_folds).")
     }
-    run_maxent_spatial_block(
-      run_id  = run_id, ds = ds, fold_id = fold_id,
-      out_root = out_root, regmult = regmult, classes = classes
+    run_model_spatial_block(
+      algo = algo, run_id = run_id, ds = ds, fold_id = fold_id,
+      out_root = out_root, seed = seed, hp = hp
     )
   }
 }

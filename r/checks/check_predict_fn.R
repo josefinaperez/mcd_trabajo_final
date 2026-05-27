@@ -7,7 +7,7 @@
 #          devuelve scores de presencia en [0, 1] y que SHAP/PDP/
 #          LIME corren sin tocar el orquestador.
 #
-# Pre-requisito de #15 (sumar algoritmos). Ejecutar desde repo root:
+# Ejecutar desde repo root:
 #   Rscript r/checks/check_predict_fn.R
 # ============================================================
 
