@@ -217,13 +217,14 @@ plot_response_curves <- function(curves_df) {
 
 save_model_artifacts <- function(run_id,
                                  cv_scheme,
+                                 algo,
                                  model,
                                  predictions_test,
                                  metrics,
                                  response_curves,
                                  out_root,
                                  extra_files = list()) {
-  run_dir <- file.path(out_root, run_id, cv_scheme)
+  run_dir <- file.path(out_root, run_id, cv_scheme, algo)
   dir.create(run_dir, recursive = TRUE, showWarnings = FALSE)
 
   saveRDS(model, file.path(run_dir, "model.rds"))
@@ -291,6 +292,7 @@ run_model_holdout <- function(algo,
   save_model_artifacts(
     run_id           = run_id,
     cv_scheme        = "holdout",
+    algo             = algo,
     model            = model,
     predictions_test = predictions_test,
     metrics          = metrics,
@@ -408,6 +410,7 @@ run_model_spatial_block <- function(algo,
   save_model_artifacts(
     run_id           = run_id,
     cv_scheme        = "spatial_block",
+    algo             = algo,
     model            = refit,
     predictions_test = preds_pool,
     metrics          = metrics,
