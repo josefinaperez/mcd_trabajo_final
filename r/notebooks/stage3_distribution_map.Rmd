@@ -32,7 +32,7 @@ manifest <- readr::read_csv(file.path(MAPS_ROOT, "manifest.csv"),
 winners <- manifest |> filter(is_winner) |> arrange(cv_scheme)
 for (i in seq_len(nrow(winners))) {
   cat("\n\n### ", winners$winner_role[i], " — ", winners$cv_scheme[i],
-      "\n\n", sep = "")
+      " / ", winners$algorithm[i], "\n\n", sep = "")
   cat("![", winners$run_id[i], "](", winners$png_path[i], ")\n", sep = "")
 }
 ```

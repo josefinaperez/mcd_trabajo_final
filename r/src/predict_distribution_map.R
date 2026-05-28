@@ -8,6 +8,8 @@
 #          (predict_pipeline.R) compone estas funciones.
 # ============================================================
 
+source("r/src/xai_predict.R")  # make_predict_fn (score de presencia [0,1], agnóstico)
+
 suppressPackageStartupMessages({
   library(readr)
   library(dplyr)
@@ -55,18 +57,19 @@ load_env_stack <- function(worldclim_dir = WORLDCLIM_DIR,
 # 2) RASTER PREDICTION
 # ------------------------------------------------------------
 #
-# Proyecta un modelo maxnet sobre el SpatRaster apilado.
-# Usa terra::predict con un wrapper que invoca el predict.maxnet
-# subyacente con type = "cloglog" y clamp = TRUE (idéntico al
-# usado en train_maxent.R para garantizar que las idoneidades
-# del mapa sean comparables con las del set de prueba).
-# Devuelve un SpatRaster mono-capa llamado "suitability".
+# Proyecta un modelo SDM sobre el SpatRaster apilado. La
+# predicción se delega en make_predict_fn() (xai_predict.R), que
+# despacha por algoritmo y normaliza a score de presencia [0,1]
+# — la misma función usada en el entrenamiento, de modo que las
+# idoneidades del mapa quedan en idéntica escala que el umbral
+# τ* del set de prueba para cualquier algoritmo (maxnet/ranger/
+# xgboost). Devuelve un SpatRaster mono-capa llamado "suitability".
 # ------------------------------------------------------------
 
 predict_suitability_raster <- function(model, env_stack) {
+  pf <- make_predict_fn(model)
   predict_chunk <- function(model, data, ...) {
-    predict(model, newdata = as.data.frame(data),
-            type = "cloglog", clamp = TRUE)
+    pf(model, as.data.frame(data))
   }
 
   out <- terra::predict(

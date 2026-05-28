@@ -34,14 +34,14 @@ stopifnot(file.exists(manifest_path), file.exists(summary_path))
 
 ## 1. Resumen de corridas
 
-Ordenado por TSS decreciente. AUC se reporta a título informativo;
-la selección del modelo final aplica el esquema dual de Miyaji et al.
-(2026) — ver sección 2 y `docs/metodologia/4.5_evaluacion_dual.md`.
+Una fila por (configuración × esquema de CV × algoritmo). AUC se reporta a
+título informativo; la selección del modelo final aplica el esquema dual de
+Miyaji et al. (2026) — ver sección 2 y `docs/metodologia/4.5_evaluacion_dual.md`.
 
 ```{r summary}
 summary_table <- read_csv(summary_path, show_col_types = FALSE)
 summary_table |>
-  select(bias_label, bp_label,
+  select(cv_scheme, algorithm, bias_label, bp_label,
          auc_test, tss, fnr, threshold_max_tss,
          sensitivity, specificity,
          n_train_pres, n_test_pres) |>
@@ -80,10 +80,12 @@ include_graphics(auc_plot_path)
 models_manifest <- read_csv(manifest_path, show_col_types = FALSE)
 
 for (i in seq_len(nrow(models_manifest))) {
-  run_id <- models_manifest$run_id[i]
-  png    <- file.path(MODELS_ROOT, run_id, "response_curves.png")
+  run_id    <- models_manifest$run_id[i]
+  cv_scheme <- models_manifest$cv_scheme[i]
+  algorithm <- models_manifest$algorithm[i]
+  png       <- file.path(MODELS_ROOT, run_id, cv_scheme, algorithm, "response_curves.png")
 
-  cat("###", run_id, "\n\n")
+  cat("###", run_id, "—", cv_scheme, "/", algorithm, "\n\n")
   if (file.exists(png)) {
     cat(sprintf('<img src="%s" style="width:100%%; max-width:900px;" />\n\n', png))
   } else {
