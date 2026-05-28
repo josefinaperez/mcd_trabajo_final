@@ -20,7 +20,7 @@ suppressPackageStartupMessages({
 # X_background como referencia, con el predict_fn provisto.
 #
 # Args:
-#   model       : modelo maxnet
+#   model       : modelo SDM (maxnet/ranger/xgboost)
 #   X_explain   : data.frame de instancias a explicar (solo
 #                 columnas predictoras)
 #   X_background: data.frame de referencia (solo predictoras)

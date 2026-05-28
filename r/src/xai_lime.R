@@ -1,7 +1,7 @@
 # ============================================================
 # File: xai_lime.R
-# Purpose: LIME para maxnet — incluye:
-#          (1) métodos S3 para que lime reconozca maxnet como
+# Purpose: LIME para modelos SDM (maxnet/ranger/xgboost) — incluye:
+#          (1) métodos S3 para que lime reconozca cada modelo como
 #              clasificador binario,
 #          (2) select_lime_points() para elegir las instancias
 #              a explicar (presencias por cuantil + puntos
@@ -156,7 +156,7 @@ select_lime_points <- function(predictions_test, ds_model_ready,
 # (3) compute_lime: corre lime sobre los puntos elegidos.
 #
 # Args:
-#   model          : modelo maxnet
+#   model          : modelo SDM (maxnet/ranger/xgboost)
 #   points         : tibble de select_lime_points()
 #   X_train        : data.frame con las columnas predictoras
 #                    (entrenamiento del modelo)

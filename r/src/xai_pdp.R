@@ -18,7 +18,7 @@ suppressPackageStartupMessages({
 # predictors y devuelve un data.frame largo (variable, x, yhat).
 #
 # Args:
-#   model            : modelo maxnet
+#   model            : modelo SDM (maxnet/ranger/xgboost)
 #   X_train          : data.frame con solo columnas predictoras
 #   predictors       : character vector con nombres de variables
 #   pred_fn          : predict_fn(model, newdata) → numeric
@@ -78,7 +78,7 @@ plot_pdp_grid <- function(pdp_df, importance, run_id) {
     facet_wrap(~ variable, scales = "free_x", ncol = 5) +
     coord_cartesian(ylim = c(0, 1)) +
     labs(x = "Valor de la variable",
-         y = "Idoneidad cloglog (PDP)",
+         y = "Idoneidad [0–1] (PDP)",
          title = paste0("PDP — ", run_id),
          subtitle = "Variables ordenadas por |SHAP| medio") +
     theme_minimal(base_size = 9)

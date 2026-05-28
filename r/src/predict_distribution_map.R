@@ -86,8 +86,8 @@ predict_suitability_raster <- function(model, env_stack) {
 # 3) BINARIZATION
 # ------------------------------------------------------------
 #
-# Aplica el umbral tau (en unidades de score cloglog) a un
-# raster continuo de idoneidad. Píxeles con score >= tau → 1
+# Aplica el umbral tau (en unidades del score de presencia
+# [0,1], agnóstico al algoritmo) a un raster continuo de idoneidad. Píxeles con score >= tau → 1
 # ("apto"), resto → 0 ("no apto"); los NA se preservan como
 # NA. El tau se lee del metrics.csv del run (columna
 # threshold_max_tss = τ* de Youden, consistente con §4.5
@@ -129,7 +129,7 @@ plot_map_panel <- function(suit_r, bin_r, run_id, threshold, occ_points) {
   p_cont <- ggplot() +
     tidyterra::geom_spatraster(data = suit_r) +
     scale_fill_viridis_c(
-      name   = "Idoneidad\n(cloglog)",
+      name   = "Idoneidad\n[0–1]",
       limits = c(0, 1),
       na.value = "transparent"
     ) +
