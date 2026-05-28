@@ -39,6 +39,7 @@ K_FOLDS        <- 5L
 BLOCK_SIZE_CAP_KM <- 300L
 
 CV_SCHEMES     <- c("holdout", "spatial_block")
+ALGOS          <- c("maxnet", "ranger", "xgboost")
 
 dir.create(MODELS_ROOT, recursive = TRUE, showWarnings = FALSE)
 
@@ -99,72 +100,78 @@ write_csv(
 )
 
 # ------------------------------------------------------------
-# 3) Entrenamiento dual: holdout + spatial_block por dataset
+# 3) Entrenamiento: cv_scheme × algo × run
+#     Los folds spatial_block dependen solo del dataset (no del
+#     algoritmo): se computan UNA vez por run_id y se reusan.
 # ------------------------------------------------------------
 
-train_one <- function(i, cv_scheme) {
+# Cache de folds por run_id (solo para spatial_block).
+fold_cache <- new.env(parent = emptyenv())
+
+get_folds <- function(run_id, dataset_path) {
+  if (!is.null(fold_cache[[run_id]])) return(fold_cache[[run_id]])
+  ds_df <- read_csv(dataset_path, show_col_types = FALSE)
+  sb <- assign_spatial_folds(df = ds_df, size_m = BLOCK_SIZE_M,
+                             k = K_FOLDS, seed = SEED)
+  # Plot de bloques (una vez por run, a nivel cv_scheme)
+  p <- plot_spatial_folds(sb$blocks, ds_df, sb$fold_id,
+                          argentina_shp = ARGENTINA_SHP)
+  fold_plot_dir <- file.path(MODELS_ROOT, run_id, "spatial_block")
+  dir.create(fold_plot_dir, recursive = TRUE, showWarnings = FALSE)
+  ggsave(file.path(fold_plot_dir, "blocks_map.png"), p,
+         width = 7, height = 8, dpi = 110)
+  fold_cache[[run_id]] <- sb$fold_id
+  sb$fold_id
+}
+
+train_one <- function(i, cv_scheme, algo) {
   run_id       <- datasets_manifest$run_id[i]
   dataset_path <- file.path(DATASETS_ROOT, run_id, "sdm_dataset_model_ready.csv")
+  hp           <- if (algo == "maxnet") list(regmult = REGMULT) else list()
 
-  message("[", i, "/", nrow(datasets_manifest), "] ", run_id, "  (", cv_scheme, ")")
+  message("[", i, "/", nrow(datasets_manifest), "] ", run_id,
+          "  (", cv_scheme, " / ", algo, ")")
 
   if (cv_scheme == "spatial_block") {
-    ds_df <- read_csv(dataset_path, show_col_types = FALSE)
-    sb <- assign_spatial_folds(
-      df     = ds_df,
-      size_m = BLOCK_SIZE_M,
-      k      = K_FOLDS,
-      seed   = SEED
-    )
-    # Persistir el plot de bloques para sanity-check
-    p <- plot_spatial_folds(sb$blocks, ds_df, sb$fold_id,
-                            argentina_shp = ARGENTINA_SHP)
-    fold_plot_dir <- file.path(MODELS_ROOT, run_id, "spatial_block")
-    dir.create(fold_plot_dir, recursive = TRUE, showWarnings = FALSE)
-    ggsave(file.path(fold_plot_dir, "blocks_map.png"), p,
-           width = 7, height = 8, dpi = 110)
-
     run_model_for_dataset(
-      algo      = "maxnet",
-      run_id    = run_id,
-      dataset_path = dataset_path,
-      out_root  = MODELS_ROOT,
-      cv_scheme = "spatial_block",
-      fold_id   = sb$fold_id,
-      hp        = list(regmult = REGMULT)
+      algo = algo, run_id = run_id, dataset_path = dataset_path,
+      out_root = MODELS_ROOT, cv_scheme = "spatial_block",
+      fold_id = get_folds(run_id, dataset_path), hp = hp
     )
   } else {
     run_model_for_dataset(
-      algo      = "maxnet",
-      run_id    = run_id,
-      dataset_path = dataset_path,
-      out_root  = MODELS_ROOT,
-      cv_scheme = "holdout",
-      p_train   = P_TRAIN,
-      seed      = SEED,
-      hp        = list(regmult = REGMULT)
+      algo = algo, run_id = run_id, dataset_path = dataset_path,
+      out_root = MODELS_ROOT, cv_scheme = "holdout",
+      p_train = P_TRAIN, seed = SEED, hp = hp
     )
   }
 }
 
-basic_metrics_per_run <- purrr::map_dfr(CV_SCHEMES, function(scheme) {
-  purrr::map_dfr(seq_len(nrow(datasets_manifest)), train_one, cv_scheme = scheme)
-})
+train_grid <- tidyr::expand_grid(
+  cv_scheme = CV_SCHEMES,
+  algo      = ALGOS,
+  i         = seq_len(nrow(datasets_manifest))
+)
+
+basic_metrics_per_run <- purrr::pmap_dfr(
+  train_grid,
+  function(cv_scheme, algo, i) train_one(i, cv_scheme, algo)
+)
 
 # ------------------------------------------------------------
 # 4) Evaluación dual (TSS / FNR @ Youden + Boyce) por run
 # ------------------------------------------------------------
 
 dual_metrics <- basic_metrics_per_run |>
-  select(run_id, cv_scheme) |>
+  select(run_id, cv_scheme, algorithm) |>
   mutate(
-    model_dir = file.path(MODELS_ROOT, run_id, cv_scheme),
+    model_dir = file.path(MODELS_ROOT, run_id, cv_scheme, algorithm),
     dual = purrr::map(model_dir, evaluate_run_dir)
   ) |>
   tidyr::unnest(dual)
 
 metrics_per_run <- basic_metrics_per_run |>
-  left_join(dual_metrics, by = c("run_id", "cv_scheme"))
+  left_join(dual_metrics, by = c("run_id", "cv_scheme", "algorithm"))
 
 # Persistir metrics.csv extendido en cada run_dir
 purrr::walk(seq_len(nrow(metrics_per_run)), function(i) {
