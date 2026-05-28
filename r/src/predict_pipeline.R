@@ -41,20 +41,23 @@ MAPS_ROOT     <- "data/outputs/sdm_maps"
 # ------------------------------------------------------------
 
 select_runs <- function(summary_df, tau_fnr) {
-  stopifnot(all(c("run_id", "cv_scheme", "tss", "fnr") %in% names(summary_df)))
+  stopifnot(all(c("run_id", "cv_scheme", "algorithm", "tss", "fnr") %in% names(summary_df)))
 
   out <- summary_df |>
     mutate(passes_filter = fnr <= tau_fnr)
 
+  # Ganador cross-algoritmo: argmax TSS sobre todos los (run_id, algorithm)
+  # que pasan el filtro DENTRO de cada cv_scheme. El ganador puede ser
+  # cualquier algoritmo.
   winners <- out |>
     filter(passes_filter) |>
     group_by(cv_scheme) |>
     slice_max(tss, n = 1, with_ties = FALSE) |>
     ungroup() |>
-    transmute(run_id, cv_scheme, .is_winner_row = TRUE)
+    transmute(run_id, cv_scheme, algorithm, .is_winner_row = TRUE)
 
   out |>
-    left_join(winners, by = c("run_id", "cv_scheme")) |>
+    left_join(winners, by = c("run_id", "cv_scheme", "algorithm")) |>
     mutate(
       is_winner   = !is.na(.is_winner_row),
       winner_role = ifelse(is_winner, paste0("winner_", cv_scheme), NA_character_)
@@ -81,11 +84,12 @@ compute_tau_fnr_robustness <- function(summary_df, tau_fnr_grid) {
     sel |>
       filter(is_winner) |>
       transmute(
-        tau_fnr       = t,
+        tau_fnr          = t,
         cv_scheme,
-        winner_run_id = run_id,
-        winner_tss    = tss,
-        winner_fnr    = fnr
+        winner_run_id    = run_id,
+        winner_algorithm = algorithm,
+        winner_tss       = tss,
+        winner_fnr       = fnr
       ) |>
       left_join(survivors, by = "cv_scheme")
   })
@@ -95,22 +99,23 @@ compute_tau_fnr_robustness <- function(summary_df, tau_fnr_grid) {
 # 3) MAPEO DE UN PAR (run_id, cv_scheme)
 # ------------------------------------------------------------
 #
-# Lee model.rds, metrics.csv y occ_processed.csv del par
-# (run_id, cv_scheme), genera los 3 artefactos cartográficos
-# y devuelve una fila del manifest con paths absolutos. El
-# layout en disco es models_root/<run_id>/<cv_scheme>/... y
-# maps_root/<run_id>/<cv_scheme>/...  (estructura paralela
-# al train_pipeline dual).
+# Lee model.rds, metrics.csv y occ_processed.csv del trío
+# (run_id, cv_scheme, algorithm), genera los 3 artefactos
+# cartográficos y devuelve una fila del manifest con paths
+# absolutos. El layout en disco es
+# models_root/<run_id>/<cv_scheme>/<algorithm>/... y
+# maps_root/<run_id>/<cv_scheme>/<algorithm>/...
 # ------------------------------------------------------------
 
-map_one_run <- function(run_id, cv_scheme, env_stack,
+map_one_run <- function(run_id, cv_scheme, algorithm, env_stack,
                         models_root, datasets_root, maps_root) {
-  model_path   <- file.path(models_root,   run_id, cv_scheme, "maxnet", "model.rds")
-  metrics_path <- file.path(models_root,   run_id, cv_scheme, "maxnet", "metrics.csv")
+  model_path   <- file.path(models_root,   run_id, cv_scheme, algorithm, "model.rds")
+  metrics_path <- file.path(models_root,   run_id, cv_scheme, algorithm, "metrics.csv")
   occ_path     <- file.path(datasets_root, run_id, "occ_processed.csv")
 
-  if (!file.exists(model_path))   stop("missing model.rds for ", run_id, "/", cv_scheme)
-  if (!file.exists(metrics_path)) stop("missing metrics.csv for ", run_id, "/", cv_scheme)
+  tag <- paste(run_id, cv_scheme, algorithm, sep = " / ")
+  if (!file.exists(model_path))   stop("missing model.rds for ", tag)
+  if (!file.exists(metrics_path)) stop("missing metrics.csv for ", tag)
   if (!file.exists(occ_path))     stop("missing occ_processed.csv for ", run_id)
 
   model   <- readRDS(model_path)
@@ -120,14 +125,15 @@ map_one_run <- function(run_id, cv_scheme, env_stack,
 
   suit_r <- predict_suitability_raster(model, env_stack)
   bin_r  <- binarize_raster(suit_r, tau)
-  fig    <- plot_map_panel(suit_r, bin_r, paste0(run_id, " / ", cv_scheme), tau, occ)
+  fig    <- plot_map_panel(suit_r, bin_r, tag, tau, occ)
 
-  run_dir <- file.path(maps_root, run_id, cv_scheme)
+  run_dir <- file.path(maps_root, run_id, cv_scheme, algorithm)
   save_map_artifacts(run_dir, suit_r, bin_r, fig)
 
   tibble(
     run_id            = run_id,
     cv_scheme         = cv_scheme,
+    algorithm         = algorithm,
     threshold_max_tss = tau,
     suit_path         = normalizePath(file.path(run_dir, "suitability.tif"),    mustWork = TRUE),
     bin_path          = normalizePath(file.path(run_dir, "binary_presence.tif"), mustWork = TRUE),
@@ -157,16 +163,17 @@ main <- function() {
   rob <- compute_tau_fnr_robustness(summary_df, TAU_FNR_GRID)
   readr::write_csv(rob, file.path(MAPS_ROOT, "tau_fnr_robustness.csv"))
 
-  to_map <- sel |> filter(passes_filter) |> select(run_id, cv_scheme)
-  message("Mapeando ", nrow(to_map), " par(es) (run_id, cv_scheme).")
+  to_map <- sel |> filter(passes_filter) |> select(run_id, cv_scheme, algorithm)
+  message("Mapeando ", nrow(to_map), " trío(s) (run_id, cv_scheme, algorithm).")
 
   env <- load_env_stack()
 
-  rows <- purrr::pmap(to_map, function(run_id, cv_scheme) {
+  rows <- purrr::pmap(to_map, function(run_id, cv_scheme, algorithm) {
     tryCatch(
-      map_one_run(run_id, cv_scheme, env, MODELS_ROOT, DATASETS_ROOT, MAPS_ROOT),
+      map_one_run(run_id, cv_scheme, algorithm, env, MODELS_ROOT, DATASETS_ROOT, MAPS_ROOT),
       error = function(e) {
-        message("ERROR mapeando ", run_id, " / ", cv_scheme, ": ", conditionMessage(e))
+        message("ERROR mapeando ", run_id, " / ", cv_scheme, " / ", algorithm,
+                ": ", conditionMessage(e))
         NULL
       }
     )
@@ -174,11 +181,11 @@ main <- function() {
 
   manifest <- rows |>
     left_join(
-      sel |> select(run_id, cv_scheme, is_winner, winner_role),
-      by = c("run_id", "cv_scheme")
+      sel |> select(run_id, cv_scheme, algorithm, is_winner, winner_role),
+      by = c("run_id", "cv_scheme", "algorithm")
     ) |>
     mutate(tau_fnr_main = TAU_FNR_MAIN) |>
-    relocate(run_id, cv_scheme, is_winner, winner_role,
+    relocate(run_id, cv_scheme, algorithm, is_winner, winner_role,
              tau_fnr_main, threshold_max_tss)
 
   readr::write_csv(manifest, file.path(MAPS_ROOT, "manifest.csv"))
@@ -188,6 +195,7 @@ main <- function() {
     transmute(
       run_id,
       cv_scheme,
+      algorithm,
       winner_role,
       tau_fnr_main      = TAU_FNR_MAIN,
       threshold_max_tss,
