@@ -81,8 +81,8 @@ explain_one_run <- function(run_id, cv_scheme, role, env_stack,
                             xai_root      = XAI_ROOT) {
   message("=== Explaining ", run_id, " / ", cv_scheme, " (", role, ")")
 
-  model_path  <- file.path(models_root,   run_id, cv_scheme, "model.rds")
-  preds_path  <- file.path(models_root,   run_id, cv_scheme, "predictions_test.csv")
+  model_path  <- file.path(models_root,   run_id, cv_scheme, "maxnet", "model.rds")
+  preds_path  <- file.path(models_root,   run_id, cv_scheme, "maxnet", "predictions_test.csv")
   ds_path     <- file.path(datasets_root, run_id, "sdm_dataset_model_ready.csv")
   stopifnot(file.exists(model_path), file.exists(preds_path), file.exists(ds_path))
 

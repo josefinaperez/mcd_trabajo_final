@@ -105,8 +105,8 @@ compute_tau_fnr_robustness <- function(summary_df, tau_fnr_grid) {
 
 map_one_run <- function(run_id, cv_scheme, env_stack,
                         models_root, datasets_root, maps_root) {
-  model_path   <- file.path(models_root,   run_id, cv_scheme, "model.rds")
-  metrics_path <- file.path(models_root,   run_id, cv_scheme, "metrics.csv")
+  model_path   <- file.path(models_root,   run_id, cv_scheme, "maxnet", "model.rds")
+  metrics_path <- file.path(models_root,   run_id, cv_scheme, "maxnet", "metrics.csv")
   occ_path     <- file.path(datasets_root, run_id, "occ_processed.csv")
 
   if (!file.exists(model_path))   stop("missing model.rds for ", run_id, "/", cv_scheme)
