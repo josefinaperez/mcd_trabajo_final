@@ -201,42 +201,40 @@ summary_table <- models_manifest |>
                          paste0("BG = ", bp_n),
                          "BG = n presencias")
   ) |>
-  select(run_id, cv_scheme, species, bias_label, bp_label,
+  select(run_id, cv_scheme, algorithm, species, bias_label, bp_label,
          n_train_pres, n_test_pres, n_train_bg, n_test_bg,
          auc_test, threshold_max_tss, sensitivity, specificity,
          tss, fnr, boyce, train_secs) |>
-  arrange(cv_scheme, desc(tss))
+  arrange(cv_scheme, algorithm, desc(tss))
 
 write_csv(summary_table, file.path(MODELS_ROOT, "summary_table.csv"))
 
-# 6a) AUC por configuración, faceteado por cv_scheme
+# 6a) AUC por configuración, faceteado por cv_scheme × algorithm
 auc_plot <- summary_table |>
   ggplot(aes(x = bias_label, y = auc_test, fill = bp_label)) +
   geom_col(position = position_dodge(width = 0.8), width = 0.7) +
   geom_hline(yintercept = 0.5, linetype = "dashed", color = "grey40") +
-  facet_grid(cv_scheme ~ species) +
+  facet_grid(cv_scheme ~ algorithm) +
   labs(x = "Corrección de sesgo espacial",
        y = "AUC (test)",
        fill = "Background points",
-       title = "AUC por configuración — holdout vs spatial-block CV") +
+       title = "AUC por configuración — cv_scheme × algoritmo") +
   theme_minimal() +
   theme(axis.text.x = element_text(angle = 20, hjust = 1))
 
 ggsave(file.path(MODELS_ROOT, "auc_comparison.png"),
-       auc_plot, width = 10, height = 6, dpi = 120)
+       auc_plot, width = 12, height = 6, dpi = 120)
 
-# 6b) TSS vs FNR (criterio Miyaji), faceteado por cv_scheme
+# 6b) TSS vs FNR (criterio Miyaji), color por algoritmo, facet por cv_scheme
 dual_plot <- summary_table |>
-  mutate(config_label = paste(bias_label, bp_label, sep = " | ")) |>
-  ggplot(aes(x = fnr, y = tss, color = bias_label, shape = bp_label)) +
+  ggplot(aes(x = fnr, y = tss, color = algorithm, shape = bias_label)) +
   geom_point(size = 3, alpha = 0.85) +
-  geom_text(aes(label = config_label), size = 2.5, vjust = -0.9, show.legend = FALSE) +
   facet_wrap(~ cv_scheme) +
   scale_x_continuous(limits = c(0, 1)) +
   scale_y_continuous(limits = c(0, 1)) +
   labs(x = "FNR  (menor es mejor)",
        y = "TSS  (mayor es mejor)",
-       title = "TSS vs FNR — holdout vs spatial-block CV",
+       title = "TSS vs FNR — cross-algoritmo",
        subtitle = "Cuadrante sup-izq: consistente y discriminatorio") +
   theme_minimal(base_size = 11) +
   theme(legend.position = "bottom")
@@ -244,19 +242,13 @@ dual_plot <- summary_table |>
 ggsave(file.path(MODELS_ROOT, "dual_metrics_comparison.png"),
        dual_plot, width = 11, height = 6, dpi = 120)
 
-# 6c) Comparación de ranking holdout vs spatial_block
-#     (mismo dataset, columna por métrica)
+# 6c) Ranking por TSS dentro de cada (cv_scheme, algorithm)
 rank_compare <- summary_table |>
-  group_by(cv_scheme) |>
+  group_by(cv_scheme, algorithm) |>
   mutate(rank_tss = rank(-tss, ties.method = "min")) |>
   ungroup() |>
-  select(run_id, cv_scheme, rank_tss, tss, fnr, boyce) |>
-  tidyr::pivot_wider(
-    names_from = cv_scheme,
-    values_from = c(rank_tss, tss, fnr, boyce),
-    names_glue = "{.value}_{cv_scheme}"
-  ) |>
-  arrange(rank_tss_spatial_block)
+  select(run_id, cv_scheme, algorithm, rank_tss, tss, fnr, boyce) |>
+  arrange(cv_scheme, algorithm, rank_tss)
 
 write_csv(rank_compare, file.path(MODELS_ROOT, "rank_compare_holdout_vs_block.csv"))
 
