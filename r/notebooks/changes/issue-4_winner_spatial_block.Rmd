@@ -39,8 +39,9 @@ w_block <- xai_manifest |> filter(role == "winner_spatial_block") |> head(1)
 
 ```{r configs}
 summary_table |>
-  filter(run_id == w_block$run_id & cv_scheme == w_block$cv_scheme) |>
-  select(cv_scheme, run_id, bias_label, bp_label,
+  filter(run_id == w_block$run_id & cv_scheme == w_block$cv_scheme &
+         algorithm == w_block$algorithm) |>
+  select(cv_scheme, algorithm, run_id, bias_label, bp_label,
          n_train_pres, n_test_pres,
          auc_test, tss, fnr, boyce, threshold_max_tss) |>
   kable(digits = 4,
@@ -73,8 +74,7 @@ read_csv(w_block$importance_path, show_col_types = FALSE) |>
 ```
 
 ```{r shap-img-block, out.width="100%"}
-knitr::include_graphics(file.path(XAI_ROOT, w_block$run_id, w_block$cv_scheme,
-                                  "shap_summary.png"))
+knitr::include_graphics(file.path(dirname(w_block$importance_path), "shap_summary.png"))
 ```
 
 ## 4. PDP — formas funcionales

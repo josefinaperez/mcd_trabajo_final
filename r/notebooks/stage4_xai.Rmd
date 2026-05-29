@@ -32,9 +32,11 @@ manifest |>
 ```
 
 ```{r helpers}
-xai_dir <- function(rid, cv) file.path(XAI_ROOT, rid, cv)
 row_for <- function(role_name) manifest |> dplyr::filter(role == role_name) |> head(1)
 winner_row <- row_for("winner_spatial_block")
+# Los artefactos viven en <run_id>/<cv_scheme>/<algorithm>/; derivamos el
+# directorio desde una ruta del manifest para no rearmarlo a mano.
+shap_summary_png <- function(row) file.path(dirname(row$importance_path), "shap_summary.png")
 ```
 
 # Ranking de importancia (SHAP)
@@ -49,8 +51,7 @@ readr::read_csv(winner_row$importance_path, show_col_types = FALSE) |>
 # SHAP summary plot
 
 ```{r shap-winner, out.width="100%"}
-knitr::include_graphics(file.path(xai_dir(winner_row$run_id, winner_row$cv_scheme),
-                                  "shap_summary.png"))
+knitr::include_graphics(shap_summary_png(winner_row))
 ```
 
 # Partial Dependence Plots
