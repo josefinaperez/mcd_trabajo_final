@@ -17,14 +17,11 @@ suppressPackageStartupMessages({
 })
 ```
 
-> Notebook **display-only** asociado al issue #4. Compara el **ganador hold-out**
-> y el **ganador spatial-block** del modelo de Polyporaceae sobre las Etapas 3
-> (mapa de distribución) y 4 (XAI: SHAP / PDP / LIME). El objetivo del informe
-> es decidir si la elección de CV altera la conclusión ecológica.
->
-> El snapshot previo de Etapa 3 y Etapa 4 (estructura plana, anterior al
-> refactor CV-aware) queda en `data/outputs/_snapshots/issue-4_pre/` como
-> auditoría del cambio.
+> Notebook **display-only** asociado al issue #4. Presenta el **ganador
+> spatial-block** del modelo de Polyporaceae sobre las Etapas 3 (mapa de
+> distribución) y 4 (XAI: SHAP / PDP / LIME). La evaluación usa un único
+> esquema de validación cruzada (k-fold espacial); el hold-out fue retirado
+> del pipeline.
 
 ```{r paths}
 MAPS_ROOT      <- "../../../data/outputs/sdm_maps"
@@ -35,41 +32,26 @@ maps_manifest    <- read_csv(file.path(MAPS_ROOT, "manifest.csv"),    show_col_t
 xai_manifest     <- read_csv(file.path(XAI_ROOT,  "manifest.csv"),    show_col_types = FALSE)
 summary_table    <- read_csv(file.path(MODELS_ROOT, "summary_table.csv"), show_col_types = FALSE)
 
-winners_xai <- xai_manifest |>
-  filter(role %in% c("winner_holdout", "winner_spatial_block")) |>
-  arrange(role)
-
-w_holdout <- winners_xai |> filter(role == "winner_holdout")        |> head(1)
-w_block   <- winners_xai |> filter(role == "winner_spatial_block") |> head(1)
+w_block <- xai_manifest |> filter(role == "winner_spatial_block") |> head(1)
 ```
 
-## 1. Configs comparadas
+## 1. Config del ganador
 
 ```{r configs}
 summary_table |>
-  filter(
-    (run_id == w_holdout$run_id & cv_scheme == w_holdout$cv_scheme) |
-    (run_id == w_block$run_id   & cv_scheme == w_block$cv_scheme)
-  ) |>
-  arrange(cv_scheme) |>
+  filter(run_id == w_block$run_id & cv_scheme == w_block$cv_scheme) |>
   select(cv_scheme, run_id, bias_label, bp_label,
          n_train_pres, n_test_pres,
          auc_test, tss, fnr, boyce, threshold_max_tss) |>
   kable(digits = 4,
-        caption = "Ganador por esquema de CV — métricas en su esquema de evaluación.")
+        caption = "Ganador spatial-block — métricas bajo k-fold espacial.")
 ```
 
-**Lectura.** Bajo hold-out el ganador es `bpn-fixed_10000` (BG = 10 000). Bajo
-spatial-block el ganador rota a `bpn-match_presence` (BG = n presencias). Los
-dos son `bias-none` con las 19 BIO; el cambio de ganador entre esquemas se da
-solo en la estrategia de cantidad de background.
-
-## 2. Mapa de distribución — lado a lado
+## 2. Mapa de distribución
 
 ```{r maps, out.width = "100%", results = "asis"}
 maps_winners <- maps_manifest |>
-  filter(is_winner) |>
-  arrange(cv_scheme)
+  filter(is_winner)
 
 for (i in seq_len(nrow(maps_winners))) {
   cat("\n\n### ", maps_winners$winner_role[i], " — ",
@@ -79,32 +61,16 @@ for (i in seq_len(nrow(maps_winners))) {
 }
 ```
 
-## 3. SHAP — top-5 importancia global
+## 3. SHAP — importancia global
 
-```{r shap-top5}
-imp_holdout <- read_csv(w_holdout$importance_path, show_col_types = FALSE) |>
-  transmute(rank_holdout = rank, variable,
-            mean_abs_shap_holdout = mean_abs_shap)
-
-imp_block <- read_csv(w_block$importance_path, show_col_types = FALSE) |>
-  transmute(rank_block = rank, variable,
-            mean_abs_shap_block = mean_abs_shap)
-
-full_join(imp_holdout, imp_block, by = "variable") |>
-  arrange(coalesce(rank_holdout, rank_block)) |>
+```{r shap-top}
+read_csv(w_block$importance_path, show_col_types = FALSE) |>
+  transmute(rank, variable, mean_abs_shap) |>
+  arrange(rank) |>
   head(10) |>
   kable(digits = 4,
-        caption = "Top variables por importancia SHAP en cada ganador.")
+        caption = "Top variables por importancia SHAP en el ganador spatial-block.")
 ```
-
-### SHAP summary — ganador hold-out
-
-```{r shap-img-holdout, out.width="100%"}
-knitr::include_graphics(file.path(XAI_ROOT, w_holdout$run_id, w_holdout$cv_scheme,
-                                  "shap_summary.png"))
-```
-
-### SHAP summary — ganador spatial-block
 
 ```{r shap-img-block, out.width="100%"}
 knitr::include_graphics(file.path(XAI_ROOT, w_block$run_id, w_block$cv_scheme,
@@ -113,27 +79,11 @@ knitr::include_graphics(file.path(XAI_ROOT, w_block$run_id, w_block$cv_scheme,
 
 ## 4. PDP — formas funcionales
 
-### Ganador hold-out
-
-```{r pdp-holdout, out.width="100%"}
-knitr::include_graphics(w_holdout$pdp_png_path)
-```
-
-### Ganador spatial-block
-
 ```{r pdp-block, out.width="100%"}
 knitr::include_graphics(w_block$pdp_png_path)
 ```
 
 ## 5. LIME — explicaciones locales
-
-### Ganador hold-out
-
-```{r lime-holdout, out.width="100%"}
-knitr::include_graphics(w_holdout$lime_panel_path)
-```
-
-### Ganador spatial-block
 
 ```{r lime-block, out.width="100%"}
 knitr::include_graphics(w_block$lime_panel_path)
@@ -141,42 +91,17 @@ knitr::include_graphics(w_block$lime_panel_path)
 
 ## 6. Interpretación
 
-- **Métricas en sus respectivos esquemas.** Hold-out produce TSS ≈ 0,76 y FNR ≈ 0,14;
-  spatial-block, evaluado bajo k-fold espacial, baja a TSS ≈ 0,69 y FNR ≈ 0,12
-  (test set ≈ 3× más grande por ser todo el dataset bajo CV). La caída de TSS
-  es esperable: el esquema espacial penaliza la dependencia geográfica residual
-  que hold-out estratificado no captura. El ganador spatial-block es menos
-  optimista pero igualmente discriminatorio.
-- **Top variables SHAP.** Si los top-5 coinciden entre ambos ganadores, la
-  decisión de CV no cambia la lectura ecológica de qué ejes climáticos
-  estructuran la distribución de Polyporaceae en Argentina. La tabla de la
-  sección 3 cuantifica este solapamiento; rangos parecidos del mismo
-  predictor pesan en la misma dirección bajo ambos esquemas.
-- **Formas PDP.** Las curvas PDP de los predictores compartidos en el top-5
-  deberían tener forma cualitativamente similar (mismo signo de tendencia,
-  mismo umbral aproximado). Diferencias de escala absoluta del eje y son
-  esperables porque el `bp_n_strategy` cambia la prevalencia base.
-- **LIME local.** Los 8 puntos críticos (presencias top/bottom + Yungas +
-  Patagonia) deberían atribuir signo consistente a las variables top-3 bajo
-  ambos esquemas. Si el signo se invierte en Yungas o Patagonia, el modelo
-  está reproduciendo un sesgo del CV usado, no una señal ecológica.
-
-> **Cierre.** La pregunta del informe (§4.4b) es si el cambio de ganador entre
-> hold-out y spatial-block es de configuración (`bpn`) sin alterar el aporte
-> climático. La tabla del §3 y los pares de PDP/SHAP de los §4-5 son la
-> evidencia visual para sostener o refutar esa hipótesis.
-
-## 7. Anexo — variantes con reducción de colinealidad (`bioclim_30s_reduced`)
-
-```{r reduced-winners}
-xai_manifest |>
-  filter(role %in% c("winner_holdout_reduced", "winner_spatial_block_reduced")) |>
-  select(cv_scheme, role, run_id, n_explained_shap, n_explained_lime) |>
-  kable(caption = "Ganadores con env_set reducido (7 BIO no colineales).")
-```
-
-Las variantes con `_reduced` se ejecutan para responder al cierre del notebook
-`issue-3_vif.Rmd` (replicar XAI sobre el subset no colineal para evitar que
-la atribución se reparta entre variables redundantes). Sus PDP/SHAP/LIME
-quedan accesibles vía el manifest XAI; la comparación cuantitativa entre
-19 BIO y 7 BIO se mantiene en el notebook de issue-3.
+- **Métrica bajo CV espacial.** El ganador se selecciona por argmax TSS entre
+  los runs que pasan el filtro de consistencia (FNR ≤ τ) bajo k-fold espacial.
+  Al penalizar la dependencia geográfica residual, el TSS es menos optimista
+  que un split estratificado pero refleja mejor la capacidad de generalización
+  a zonas no muestreadas.
+- **Top variables SHAP.** La tabla del §3 identifica qué ejes climáticos (y, si
+  el env_set ganador incluye vegetación, qué capas de cobertura) estructuran la
+  distribución de Polyporaceae en Argentina.
+- **Formas PDP.** Las curvas del §4 muestran el signo y los umbrales de la
+  respuesta especie-ambiente de los predictores dominantes.
+- **LIME local.** Los puntos críticos (presencias top/bottom + Yungas +
+  Patagonia) validan que la atribución local sea consistente con la lectura
+  global; una inversión de signo en Yungas o Patagonia señalaría un artefacto
+  del muestreo más que una señal ecológica.
