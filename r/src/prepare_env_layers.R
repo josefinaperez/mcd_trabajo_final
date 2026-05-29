@@ -9,7 +9,10 @@
 #   source("r/src/prepare_env_layers.R")
 # ============================================================
 
-suppressPackageStartupMessages(library(terra))
+suppressPackageStartupMessages({
+  library(terra)
+  library(sf)
+})
 source("r/src/env_layers.R")
 
 SHP_PATH    <- "data/shp/argentina/argentina.shp"
@@ -39,11 +42,19 @@ build_vegetation_layers <- function(template) {
   ar <- terra::vect(SHP_PATH)
 
   # tree cover % (ESA WorldCover, clase árbol = 10)
-  # Mosaico virtual (VRT) de los tiles: distintos extents no se pueden apilar
-  # con rast(); el VRT los une sin copiar datos y resample los lee por bloques.
-  wc <- terra::vrt(list.files(WC_DIR, pattern = "tif$", full.names = TRUE),
-                   filename = tempfile(fileext = ".vrt"), overwrite = TRUE)
-  tree_pct <- crop_mask_to_region(cover_fraction(wc, target_class = 10, template = template), ar)
+  # VRT (mosaico virtual de los 70 tiles, sin copiar datos) + warp GDAL a ~270m
+  # con -r near: submuestrea ~1/256 de los píxeles 10m en una sola pasada por
+  # bloques (minutos). Hacer cover_fraction directo a 10m leía miles de millones
+  # de celdas (horas). cover_fraction luego promedia 270m -> 2.5 arc-min.
+  wc_vrt_path  <- tempfile(fileext = ".vrt")
+  wc_down_path <- tempfile(fileext = ".tif")
+  terra::vrt(list.files(WC_DIR, pattern = "tif$", full.names = TRUE),
+             filename = wc_vrt_path, overwrite = TRUE)
+  sf::gdal_utils("warp", source = wc_vrt_path, destination = wc_down_path,
+                 options = c("-tr", "0.0025", "0.0025", "-r", "near",
+                             "-ot", "Byte", "-co", "COMPRESS=LZW"))
+  tree_pct <- crop_mask_to_region(
+    cover_fraction(terra::rast(wc_down_path), target_class = 10, template = template), ar)
   names(tree_pct) <- "tree_cover_pct"
   terra::writeRaster(tree_pct, file.path(OUT_VEG, "tree_cover_pct.tif"), overwrite = TRUE)
 
@@ -55,12 +66,16 @@ build_vegetation_layers <- function(template) {
   terra::writeRaster(ndvi_mean, file.path(OUT_VEG, "ndvi_mean.tif"), overwrite = TRUE)
   terra::writeRaster(ndvi_seas, file.path(OUT_VEG, "ndvi_seasonality.tif"), overwrite = TRUE)
 
-  # altura de dosel (INTA, 30 m). Agrega primero (~9e9 celdas) y luego alinea.
-  # NA -> 0 (sin bosque nativo); re-enmascara océano a NA.
-  canopy_raw <- terra::rast(CANOPY_PATH)
-  fact <- max(1, floor(terra::res(template)[1] / terra::res(canopy_raw)[1]))
-  canopy_agg <- terra::aggregate(canopy_raw, fact = fact, fun = mean, na.rm = TRUE)
-  canopy <- crop_mask_to_region(fill_na(align_to_template(canopy_agg, template), 0), ar)
+  # altura de dosel (INTA, 30 m, 34 GB). warp GDAL a ~270m con -r average:
+  # usa las overviews (.ovr) del .tif para promediar rápido (minutos), en vez
+  # de terra::aggregate que recorre las ~9e9 celdas nativas (horas).
+  # NA -> 0 (sin bosque nativo); crop_mask re-enmascara océano a NA.
+  canopy_down_path <- tempfile(fileext = ".tif")
+  sf::gdal_utils("warp", source = CANOPY_PATH, destination = canopy_down_path,
+                 options = c("-tr", "0.0025", "0.0025", "-r", "average",
+                             "-co", "COMPRESS=LZW"))
+  canopy <- crop_mask_to_region(
+    fill_na(align_to_template(terra::rast(canopy_down_path), template), 0), ar)
   names(canopy) <- "canopy_height"
   terra::writeRaster(canopy, file.path(OUT_VEG, "canopy_height.tif"), overwrite = TRUE)
 
