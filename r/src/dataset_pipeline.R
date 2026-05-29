@@ -88,27 +88,40 @@ env_sets <- list(
   bioclim_veg = list(files = c(bioclim_files, vegetation_files))
 )
 
-# Si existe selección de variables (env_selection_pipeline.R), registrar
-# bioclim_reduced como env_set adicional con el subset no colineal.
-# El match es agnóstico a la resolución: selected_vars.csv puede traer nombres
-# como wc2.1_30s_bio_11 y los rasters ahora son wc2.1_2.5m_bio_11; se comparan
-# por el identificador de variable (bio_N).
-selected_vars_path <- "data/outputs/env_selection/selected_vars.csv"
-if (file.exists(selected_vars_path)) {
-  bio_id <- function(x) sub("^.*?(bio_\\d+)$", "\\1", tools::file_path_sans_ext(basename(x)))
-  selected_vars <- readr::read_csv(selected_vars_path, show_col_types = FALSE) |>
+# Identificador de variable, agnóstico a la resolución y robusto a nombres de
+# vegetación: para bioclim "wc2.1_30s_bio_11" y "wc2.1_2.5m_bio_11" -> "bio_11";
+# para vegetación "tree_cover_pct" queda igual. Permite casar selecciones
+# guardadas con nombres viejos contra los archivos actuales.
+bio_id <- function(x) sub("^.*?(bio_\\d+)$", "\\1", tools::file_path_sans_ext(basename(x)))
+
+# Registra un env_set reducido (subset no colineal) si existe su selección.
+register_reduced_env_set <- function(name, selected_path, candidate_files) {
+  if (!file.exists(selected_path)) return(invisible())
+  selected <- readr::read_csv(selected_path, show_col_types = FALSE) |>
     dplyr::filter(status == "kept") |>
     dplyr::pull(variable)
-  reduced_files <- bioclim_files[bio_id(bioclim_files) %in% bio_id(selected_vars)]
-  if (length(reduced_files) == length(selected_vars)) {
-    env_sets$bioclim_reduced <- list(files = reduced_files)
-    message(sprintf("env_sets: bioclim_reduced registrado con %d variables.",
-                    length(reduced_files)))
+  reduced <- candidate_files[bio_id(candidate_files) %in% bio_id(selected)]
+  if (length(reduced) == length(selected)) {
+    env_sets[[name]] <<- list(files = reduced)
+    message(sprintf("env_sets: %s registrado con %d variables.", name, length(reduced)))
   } else {
-    warning("selected_vars.csv presente pero no coincide con archivos del raster. ",
-            "Se omite bioclim_reduced.")
+    warning(basename(selected_path), " presente pero no coincide con los archivos. ",
+            "Se omite ", name, ".")
   }
 }
+
+# bioclim_reduced: subset no colineal solo de bioclim.
+register_reduced_env_set(
+  "bioclim_reduced",
+  "data/outputs/env_selection/selected_vars.csv",
+  bioclim_files
+)
+# bioclim_veg_reduced: subset no colineal de bioclim + vegetación juntas.
+register_reduced_env_set(
+  "bioclim_veg_reduced",
+  "data/outputs/env_selection/selected_vars_veg.csv",
+  c(bioclim_files, vegetation_files)
+)
 
 fixed_bp_n <- 10000L
 

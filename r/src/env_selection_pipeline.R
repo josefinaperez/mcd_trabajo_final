@@ -8,39 +8,60 @@ suppressPackageStartupMessages({
 out_dir <- "data/outputs/env_selection"
 dir.create(out_dir, recursive = TRUE, showWarnings = FALSE)
 
-ref_dataset_path <- file.path(
-  "data/outputs/sdm_parallel",
-  "polyporaceae__bias-none__bp-random__bpn-fixed_10000__env-bioclim",
-  "sdm_dataset_model_ready.csv"
-)
-if (!file.exists(ref_dataset_path)) {
-  stop("Dataset de referencia no encontrado. Correr dataset_pipeline.R primero: ",
-       ref_dataset_path)
+DATASETS_ROOT <- "data/outputs/sdm_parallel"
+
+# Corre la reducción de colinealidad sobre el dataset de referencia de un
+# env_set y persiste corr_matrix<suffix>.csv, selected_vars<suffix>.csv y
+# corr_heatmap<suffix>.png. predictor_cols_fn elige qué columnas entran al
+# análisis (solo bioclim vs bioclim+vegetación).
+run_selection <- function(ref_run_id, predictor_cols_fn, suffix = "", cutoff = 0.7) {
+  ref_path <- file.path(DATASETS_ROOT, ref_run_id, "sdm_dataset_model_ready.csv")
+  if (!file.exists(ref_path)) {
+    stop("Dataset de referencia no encontrado. Correr dataset_pipeline.R primero: ",
+         ref_path)
+  }
+  ds <- readr::read_csv(ref_path, show_col_types = FALSE)
+  predictor_cols <- predictor_cols_fn(ds)
+  message(sprintf("Referencia%s: %s\nFilas: %d | Predictores: %d",
+                  suffix, ref_path, nrow(ds), length(predictor_cols)))
+
+  sel <- compute_env_selection(
+    dataset        = ds,
+    predictor_cols = predictor_cols,
+    cutoff         = cutoff
+  )
+
+  readr::write_csv(sel$cor_tidy, file.path(out_dir, paste0("corr_matrix", suffix, ".csv")))
+  readr::write_csv(
+    tibble::tibble(variable = sel$selected, status = "kept") |>
+      bind_rows(tibble::tibble(variable = sel$dropped, status = "dropped")),
+    file.path(out_dir, paste0("selected_vars", suffix, ".csv"))
+  )
+  p <- plot_corr_heatmap(sel$cor_tidy, sel$selected, cutoff = sel$cutoff)
+  ggplot2::ggsave(file.path(out_dir, paste0("corr_heatmap", suffix, ".png")),
+                  p, width = 9, height = 8, dpi = 150)
+
+  message(sprintf("Seleccionadas (%d): %s",
+                  length(sel$selected), paste(sel$selected, collapse = ", ")))
+  message(sprintf("Descartadas (%d): %s\n",
+                  length(sel$dropped), paste(sel$dropped, collapse = ", ")))
+  invisible(sel)
 }
 
-ref_dataset <- readr::read_csv(ref_dataset_path, show_col_types = FALSE)
-predictor_cols <- grep("^wc2", names(ref_dataset), value = TRUE)
-message(sprintf("Referencia: %s\nFilas: %d | Predictores: %d",
-                ref_dataset_path, nrow(ref_dataset), length(predictor_cols)))
+predictors_minus_meta <- function(ds) {
+  setdiff(names(ds), c("class", "decimalLongitude", "decimalLatitude"))
+}
 
-sel <- compute_env_selection(
-  dataset        = ref_dataset,
-  predictor_cols = predictor_cols,
-  cutoff         = 0.7
+# 1) Solo bioclim -> selected_vars.csv (alimenta el env_set bioclim_reduced).
+run_selection(
+  ref_run_id        = "polyporaceae__bias-none__bp-random__bpn-fixed_10000__env-bioclim",
+  predictor_cols_fn = function(ds) grep("^wc2", names(ds), value = TRUE),
+  suffix            = ""
 )
 
-readr::write_csv(sel$cor_tidy, file.path(out_dir, "corr_matrix.csv"))
-readr::write_csv(
-  tibble::tibble(variable = sel$selected, status = "kept") |>
-    bind_rows(tibble::tibble(variable = sel$dropped, status = "dropped")),
-  file.path(out_dir, "selected_vars.csv")
+# 2) Bioclim + vegetación -> selected_vars_veg.csv (alimenta bioclim_veg_reduced).
+run_selection(
+  ref_run_id        = "polyporaceae__bias-none__bp-random__bpn-fixed_10000__env-bioclim_veg",
+  predictor_cols_fn = predictors_minus_meta,
+  suffix            = "_veg"
 )
-
-p <- plot_corr_heatmap(sel$cor_tidy, sel$selected, cutoff = sel$cutoff)
-ggplot2::ggsave(file.path(out_dir, "corr_heatmap.png"),
-                p, width = 9, height = 8, dpi = 150)
-
-message(sprintf("\nSeleccionadas (%d): %s",
-                length(sel$selected), paste(sel$selected, collapse = ", ")))
-message(sprintf("\nDescartadas (%d): %s",
-                length(sel$dropped), paste(sel$dropped, collapse = ", ")))
