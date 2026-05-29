@@ -80,29 +80,33 @@ species_table <- tibble::tibble(
   occ_file = paste0("df_", slug(species_config$scientific_name), ".csv")
 )
 
-bioclim_files <- list.files("data/features/worldclim/wc2.1_30s_bio", full.names = TRUE)
+bioclim_files    <- list.files("data/features/env_2.5m_ar/bioclim", pattern = "tif$", full.names = TRUE)
+vegetation_files <- list.files("data/features/env_2.5m_ar/vegetation", pattern = "tif$", full.names = TRUE)
 
 env_sets <- list(
-  bioclim_30s = list(files = bioclim_files)
+  bioclim     = list(files = bioclim_files),
+  bioclim_veg = list(files = c(bioclim_files, vegetation_files))
 )
 
 # Si existe selección de variables (env_selection_pipeline.R), registrar
-# bioclim_30s_reduced como env_set adicional con el subset no colineal.
+# bioclim_reduced como env_set adicional con el subset no colineal.
+# El match es agnóstico a la resolución: selected_vars.csv puede traer nombres
+# como wc2.1_30s_bio_11 y los rasters ahora son wc2.1_2.5m_bio_11; se comparan
+# por el identificador de variable (bio_N).
 selected_vars_path <- "data/outputs/env_selection/selected_vars.csv"
 if (file.exists(selected_vars_path)) {
+  bio_id <- function(x) sub("^.*?(bio_\\d+)$", "\\1", tools::file_path_sans_ext(basename(x)))
   selected_vars <- readr::read_csv(selected_vars_path, show_col_types = FALSE) |>
     dplyr::filter(status == "kept") |>
     dplyr::pull(variable)
-  reduced_files <- bioclim_files[
-    tools::file_path_sans_ext(basename(bioclim_files)) %in% selected_vars
-  ]
+  reduced_files <- bioclim_files[bio_id(bioclim_files) %in% bio_id(selected_vars)]
   if (length(reduced_files) == length(selected_vars)) {
-    env_sets$bioclim_30s_reduced <- list(files = reduced_files)
-    message(sprintf("env_sets: bioclim_30s_reduced registrado con %d variables.",
+    env_sets$bioclim_reduced <- list(files = reduced_files)
+    message(sprintf("env_sets: bioclim_reduced registrado con %d variables.",
                     length(reduced_files)))
   } else {
     warning("selected_vars.csv presente pero no coincide con archivos del raster. ",
-            "Se omite bioclim_30s_reduced.")
+            "Se omite bioclim_reduced.")
   }
 }
 
