@@ -26,4 +26,17 @@ stopifnot(sum(is.na(terra::values(out))) > 0)               # enmascarado
 stopifnot(sum(!is.na(terra::values(out))) > 0)              # algo queda
 ok("crop_mask_to_region")
 
+# ---- align_to_template ----
+template <- terra::rast(nrows = 10, ncols = 10,
+                        xmin = -68, xmax = -62, ymin = -38, ymax = -32,
+                        crs = "EPSG:4326")
+terra::values(template) <- 0
+src <- terra::rast(nrows = 60, ncols = 60,
+                   xmin = -68, xmax = -62, ymin = -38, ymax = -32,
+                   crs = "EPSG:4326")
+terra::values(src) <- seq_len(terra::ncell(src))
+aligned <- align_to_template(src, template, method = "bilinear")
+stopifnot(terra::compareGeom(aligned, template, stopOnError = FALSE))
+ok("align_to_template")
+
 cat("\nTODOS LOS CHEQUEOS OK\n")
