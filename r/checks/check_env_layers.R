@@ -40,17 +40,17 @@ stopifnot(terra::compareGeom(aligned, template, stopOnError = FALSE))
 ok("align_to_template")
 
 # ---- cover_fraction ----
-tmpl1 <- terra::rast(nrows = 1, ncols = 1,
+# 100x100 fuente, mitad superior clase 1 -> template 2x2 => fracción [100,100,0,0]
+tmpl2 <- terra::rast(nrows = 2, ncols = 2,
                      xmin = 0, xmax = 10, ymin = 0, ymax = 10,
                      crs = "EPSG:4326")
-terra::values(tmpl1) <- 0
-cls <- terra::rast(nrows = 10, ncols = 10,
+terra::values(tmpl2) <- 0
+cls <- terra::rast(nrows = 100, ncols = 100,
                    xmin = 0, xmax = 10, ymin = 0, ymax = 10,
                    crs = "EPSG:4326")
-vv <- rep(2L, 100); vv[1:50] <- 1L   # 50% clase 1 ("árbol")
-terra::values(cls) <- vv
-frac <- cover_fraction(cls, target_class = 1L, template = tmpl1)
-stopifnot(abs(terra::values(frac)[1] - 50) < 1e-6)
+terra::values(cls) <- c(rep(1L, 50 * 100), rep(2L, 50 * 100))
+frac <- terra::values(cover_fraction(cls, target_class = 1L, template = tmpl2))[, 1]
+stopifnot(all(abs(frac - c(100, 100, 0, 0)) < 1e-6))
 ok("cover_fraction")
 
 # ---- temporal_mean / temporal_amplitude ----
