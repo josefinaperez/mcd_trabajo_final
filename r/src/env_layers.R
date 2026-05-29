@@ -34,3 +34,15 @@ cover_fraction <- function(class_rast, target_class, template) {
   frac <- terra::resample(agg, template, method = "bilinear")
   frac * 100
 }
+
+# Media píxel-a-píxel de un stack multi-temporal (p. ej. NDVI anual).
+temporal_mean <- function(stack) {
+  terra::app(stack, fun = mean, na.rm = TRUE)
+}
+
+# Amplitud intra-anual (máx - mín) como proxy de estacionalidad.
+temporal_amplitude <- function(stack) {
+  mx <- terra::app(stack, fun = max, na.rm = TRUE)
+  mn <- terra::app(stack, fun = min, na.rm = TRUE)
+  mx - mn
+}

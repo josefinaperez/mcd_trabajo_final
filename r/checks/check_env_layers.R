@@ -53,4 +53,15 @@ frac <- cover_fraction(cls, target_class = 1L, template = tmpl1)
 stopifnot(abs(terra::values(frac)[1] - 50) < 1e-6)
 ok("cover_fraction")
 
+# ---- temporal_mean / temporal_amplitude ----
+b <- terra::rast(nrows = 2, ncols = 2,
+                 xmin = 0, xmax = 2, ymin = 0, ymax = 2, crs = "EPSG:4326")
+l1 <- b; terra::values(l1) <- 0
+l2 <- b; terra::values(l2) <- 4
+l3 <- b; terra::values(l3) <- 2
+st <- c(l1, l2, l3)
+stopifnot(all(terra::values(temporal_mean(st)) == 2))
+stopifnot(all(terra::values(temporal_amplitude(st)) == 4))   # max - min = 4 - 0
+ok("temporal_mean / temporal_amplitude")
+
 cat("\nTODOS LOS CHEQUEOS OK\n")
