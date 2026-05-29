@@ -1,9 +1,7 @@
 # ============================================================
 # File: train_pipeline.R
 # Purpose: Entrenar MaxEnt sobre todos los datasets del manifest
-#          generado por dataset_pipeline.R, con dos esquemas de
-#          evaluación coexistiendo en el mismo manifest:
-#            - holdout       : split estratificado 70/30 (seed=42)
+#          generado por dataset_pipeline.R, evaluando con:
 #            - spatial_block : k=5 folds sobre grilla AEA Argentina,
 #                              tamaño de bloque derivado de la
 #                              autocorrelación de las BIO.
@@ -38,7 +36,7 @@ REGMULT        <- 1
 K_FOLDS        <- 5L
 BLOCK_SIZE_CAP_KM <- 300L
 
-CV_SCHEMES     <- c("holdout", "spatial_block")
+CV_SCHEMES     <- c("spatial_block")
 ALGOS          <- c("maxnet", "ranger", "xgboost")
 
 dir.create(MODELS_ROOT, recursive = TRUE, showWarnings = FALSE)
@@ -250,7 +248,7 @@ rank_compare <- summary_table |>
   select(run_id, cv_scheme, algorithm, rank_tss, tss, fnr, boyce) |>
   arrange(cv_scheme, algorithm, rank_tss)
 
-write_csv(rank_compare, file.path(MODELS_ROOT, "rank_compare_holdout_vs_block.csv"))
+write_csv(rank_compare, file.path(MODELS_ROOT, "rank_compare_spatial_block.csv"))
 
 message("OK. Outputs en: ", MODELS_ROOT)
 print(summary_table)
