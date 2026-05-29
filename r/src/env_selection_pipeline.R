@@ -10,7 +10,7 @@ dir.create(out_dir, recursive = TRUE, showWarnings = FALSE)
 
 ref_dataset_path <- file.path(
   "data/outputs/sdm_parallel",
-  "polyporaceae__bias-none__bp-random__bpn-fixed_10000__env-bioclim_30s",
+  "polyporaceae__bias-none__bp-random__bpn-fixed_10000__env-bioclim",
   "sdm_dataset_model_ready.csv"
 )
 if (!file.exists(ref_dataset_path)) {

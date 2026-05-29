@@ -22,26 +22,34 @@ suppressPackageStartupMessages({
   library(maxnet)   # registra predict.maxnet para terra::predict
 })
 
-WORLDCLIM_DIR  <- "data/features/worldclim/wc2.1_30s_bio"
+BIOCLIM_DIR    <- "data/features/env_2.5m_ar/bioclim"
+VEGETATION_DIR <- "data/features/env_2.5m_ar/vegetation"
 ARGENTINA_SHP  <- "data/shp/argentina/argentina.shp"
 
 # ------------------------------------------------------------
 # 1) ENV STACK LOADING
 # ------------------------------------------------------------
 #
-# Levanta los 19 rasters BIO de WorldClim, los apila en un
-# SpatRaster, los recorta (crop) al bounding box de Argentina
-# y los enmascara (mask) al polígono del país. Las capas se
-# nombran por el basename del .tif (ej. "wc2.1_30s_bio_1"),
-# lo que coincide exactamente con las columnas usadas por el
-# modelo entrenado.
+# Levanta el superset de predictores (19 BIO 2.5 arc-min + 4
+# capas de vegetación), todos sobre la misma grilla, los apila
+# en un SpatRaster, los recorta (crop) al bounding box de
+# Argentina y los enmascara (mask) al polígono del país. Las
+# capas se nombran por el basename del .tif (ej. "wc2.1_2.5m_bio_1",
+# "tree_cover_pct"), que coincide con las columnas del dataset.
+# El orquestador subsetea este stack a los predictores reales
+# de cada run, de modo que un modelo bioclim no quede recortado
+# al extent de las capas de vegetación.
 # ------------------------------------------------------------
 
-load_env_stack <- function(worldclim_dir = WORLDCLIM_DIR,
-                           shp_path      = ARGENTINA_SHP) {
-  tif_paths <- list.files(worldclim_dir, pattern = "\\.tif$", full.names = TRUE)
+load_env_stack <- function(bioclim_dir    = BIOCLIM_DIR,
+                           vegetation_dir = VEGETATION_DIR,
+                           shp_path       = ARGENTINA_SHP) {
+  tif_paths <- c(
+    list.files(bioclim_dir,    pattern = "\\.tif$", full.names = TRUE),
+    list.files(vegetation_dir, pattern = "\\.tif$", full.names = TRUE)
+  )
   if (length(tif_paths) == 0) {
-    stop("load_env_stack: no .tif files in ", worldclim_dir)
+    stop("load_env_stack: no .tif files in ", bioclim_dir, " / ", vegetation_dir)
   }
 
   env <- terra::rast(tif_paths)
@@ -166,7 +174,7 @@ plot_map_panel <- function(suit_r, bin_r, run_id, threshold, occ_points) {
   (p_cont | p_bin) +
     patchwork::plot_annotation(
       title    = paste0("Distribución potencial — ", run_id),
-      subtitle = "Predicción MaxEnt sobre Argentina (WorldClim 30 arc-sec, EPSG:4326)"
+      subtitle = "Predicción sobre Argentina (grilla 2.5 arc-min, EPSG:4326)"
     )
 }
 

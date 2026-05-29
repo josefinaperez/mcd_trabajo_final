@@ -29,7 +29,7 @@ suppressPackageStartupMessages({
 
 DATASETS_ROOT  <- "data/outputs/sdm_parallel"
 MODELS_ROOT    <- "data/outputs/sdm_models"
-ENV_DIR        <- "data/features/worldclim/wc2.1_30s_bio"
+ENV_DIR        <- "data/features/env_2.5m_ar/bioclim"
 ARGENTINA_SHP  <- "data/shp/argentina/argentina.shp"
 
 SEED           <- 42

@@ -68,19 +68,19 @@ predict_model.xgb.Booster <- function(x, newdata, type, ...) .lime_predict_df(x,
 #                      decimalLatitude, class, score)
 #   ds_model_ready   : data.frame con coords + predictoras
 #                      (todas las filas del dataset)
-#   env_stack        : SpatRaster con las 19 BIO (para extraer
-#                      features en los puntos críticos)
+#   env_stack        : SpatRaster con los predictores del run
+#                      (para extraer features en los puntos críticos)
 #   critical_points  : tibble con (point_id, lon, lat, region)
 #                      por especie
 #
 # Returns:
 #   tibble con columnas: point_id, lon, lat, score, origin,
-#   class_observed + las 19 columnas wc2.1_30s_bio_*.
+#   class_observed + las columnas de predictores del run.
 # ------------------------------------------------------------
 
 select_lime_points <- function(predictions_test, ds_model_ready,
                                env_stack, critical_points) {
-  pred_cols <- grep("^wc2.1_30s_bio_", names(ds_model_ready), value = TRUE)
+  pred_cols <- setdiff(names(ds_model_ready), c("class", "decimalLongitude", "decimalLatitude"))
 
   pres_test <- predictions_test |>
     dplyr::filter(class == 1) |>

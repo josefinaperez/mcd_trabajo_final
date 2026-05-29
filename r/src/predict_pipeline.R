@@ -112,18 +112,33 @@ map_one_run <- function(run_id, cv_scheme, algorithm, env_stack,
   model_path   <- file.path(models_root,   run_id, cv_scheme, algorithm, "model.rds")
   metrics_path <- file.path(models_root,   run_id, cv_scheme, algorithm, "metrics.csv")
   occ_path     <- file.path(datasets_root, run_id, "occ_processed.csv")
+  mr_path      <- file.path(datasets_root, run_id, "sdm_dataset_model_ready.csv")
 
   tag <- paste(run_id, cv_scheme, algorithm, sep = " / ")
   if (!file.exists(model_path))   stop("missing model.rds for ", tag)
   if (!file.exists(metrics_path)) stop("missing metrics.csv for ", tag)
   if (!file.exists(occ_path))     stop("missing occ_processed.csv for ", run_id)
+  if (!file.exists(mr_path))      stop("missing sdm_dataset_model_ready.csv for ", run_id)
 
   model   <- readRDS(model_path)
   metrics <- readr::read_csv(metrics_path, show_col_types = FALSE)
   occ     <- readr::read_csv(occ_path,     show_col_types = FALSE)
   tau     <- as.numeric(metrics$threshold_max_tss)
 
-  suit_r <- predict_suitability_raster(model, env_stack)
+  # Subsetea el stack a los predictores reales de este run (env_set),
+  # leídos del header del dataset. Así un modelo bioclim no hereda el
+  # extent (ni los NA) de las capas de vegetación del superset.
+  predictors <- setdiff(
+    names(readr::read_csv(mr_path, n_max = 0, show_col_types = FALSE)),
+    c("class", "decimalLongitude", "decimalLatitude")
+  )
+  missing_layers <- setdiff(predictors, names(env_stack))
+  if (length(missing_layers) > 0) {
+    stop("env_stack no tiene capas para ", tag, ": ",
+         paste(missing_layers, collapse = ", "))
+  }
+
+  suit_r <- predict_suitability_raster(model, env_stack[[predictors]])
   bin_r  <- binarize_raster(suit_r, tau)
   fig    <- plot_map_panel(suit_r, bin_r, tag, tau, occ)
 

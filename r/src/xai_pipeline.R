@@ -89,7 +89,7 @@ explain_one_run <- function(run_id, cv_scheme, algorithm, role, env_stack,
   model <- readRDS(model_path)
   preds <- readr::read_csv(preds_path, show_col_types = FALSE)
   ds    <- readr::read_csv(ds_path,    show_col_types = FALSE)
-  pred_cols <- grep("^wc2.1_30s_bio_", names(ds), value = TRUE)
+  pred_cols <- setdiff(names(ds), c("class", "decimalLongitude", "decimalLatitude"))
   stopifnot(length(pred_cols) >= 1L)
 
   run_dir <- file.path(xai_root, run_id, cv_scheme, algorithm)
