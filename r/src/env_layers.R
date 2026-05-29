@@ -21,3 +21,16 @@ align_to_template <- function(rast, template, method = "bilinear") {
     terra::resample(rast, template, method = method)
   }
 }
+
+# Fracción (%) de celdas-fuente de una clase dada, agregada a la
+# grilla del template. Útil para "tree cover %" desde una clasificación.
+# Agrega la máscara binaria a ~la resolución del template (media) y luego
+# la alinea exactamente a la grilla; resample("average") no agrega bien
+# cuando el template es mucho más grueso que la fuente.
+cover_fraction <- function(class_rast, target_class, template) {
+  mask01 <- terra::ifel(class_rast == target_class, 1, 0)
+  fact <- pmax(1, round(terra::res(template) / terra::res(mask01)))
+  agg <- terra::aggregate(mask01, fact = fact, fun = mean, na.rm = TRUE)
+  frac <- terra::resample(agg, template, method = "bilinear")
+  frac * 100
+}

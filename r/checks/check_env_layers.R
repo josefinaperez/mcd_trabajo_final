@@ -39,4 +39,18 @@ aligned <- align_to_template(src, template, method = "bilinear")
 stopifnot(terra::compareGeom(aligned, template, stopOnError = FALSE))
 ok("align_to_template")
 
+# ---- cover_fraction ----
+tmpl1 <- terra::rast(nrows = 1, ncols = 1,
+                     xmin = 0, xmax = 10, ymin = 0, ymax = 10,
+                     crs = "EPSG:4326")
+terra::values(tmpl1) <- 0
+cls <- terra::rast(nrows = 10, ncols = 10,
+                   xmin = 0, xmax = 10, ymin = 0, ymax = 10,
+                   crs = "EPSG:4326")
+vv <- rep(2L, 100); vv[1:50] <- 1L   # 50% clase 1 ("árbol")
+terra::values(cls) <- vv
+frac <- cover_fraction(cls, target_class = 1L, template = tmpl1)
+stopifnot(abs(terra::values(frac)[1] - 50) < 1e-6)
+ok("cover_fraction")
+
 cat("\nTODOS LOS CHEQUEOS OK\n")
