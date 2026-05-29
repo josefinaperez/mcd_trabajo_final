@@ -64,4 +64,12 @@ stopifnot(all(terra::values(temporal_mean(st)) == 2))
 stopifnot(all(terra::values(temporal_amplitude(st)) == 4))   # max - min = 4 - 0
 ok("temporal_mean / temporal_amplitude")
 
+# ---- fill_na ----
+rna <- terra::rast(nrows = 2, ncols = 2,
+                   xmin = 0, xmax = 2, ymin = 0, ymax = 2, crs = "EPSG:4326")
+terra::values(rna) <- c(NA, 5, NA, 7)
+filled <- fill_na(rna, 0)
+stopifnot(all(terra::values(filled) == c(0, 5, 0, 7)))
+ok("fill_na")
+
 cat("\nTODOS LOS CHEQUEOS OK\n")

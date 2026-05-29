@@ -46,3 +46,8 @@ temporal_amplitude <- function(stack) {
   mn <- terra::app(stack, fun = min, na.rm = TRUE)
   mx - mn
 }
+
+# Reemplaza NA por un valor (p. ej. canopy_height = 0 donde no hay bosque).
+fill_na <- function(rast, value = 0) {
+  terra::ifel(is.na(rast), value, rast)
+}
