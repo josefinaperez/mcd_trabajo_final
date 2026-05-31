@@ -27,6 +27,14 @@ ensure_dir <- function(path) {
   if (!dir.exists(path)) dir.create(path, recursive = TRUE, showWarnings = FALSE)
 }
 
+# Artefactos que un dataset-run completo deja en su run_dir. Si están los
+# cuatro, el run se considera ya construido (idempotencia).
+DATASET_ARTIFACTS <- c("occ_processed.csv", "background_points.csv",
+                       "sdm_dataset.csv", "sdm_dataset_model_ready.csv")
+dataset_artifacts_exist <- function(run_dir) {
+  all(file.exists(file.path(run_dir, DATASET_ARTIFACTS)))
+}
+
 safe_slug <- function(x) {
   x |>
     tolower() |>
@@ -304,10 +312,11 @@ build_one_sdm_dataset <- function(config_row,
                                   lon_col = "decimalLongitude",
                                   lat_col = "decimalLatitude",
                                   fixed_bp_n = 10000L,
-                                  cols_to_keep = NA) {
+                                  cols_to_keep = NA,
+                                  force = FALSE) {
   # config_row is one-row tibble/data.frame
   config_row <- as.list(config_row)
-  
+
   species        <- config_row$species
   occ_file       <- config_row$occ_file
   bias_method    <- config_row$bias_method
@@ -316,18 +325,36 @@ build_one_sdm_dataset <- function(config_row,
   bp_n_strategy  <- config_row$bp_n_strategy
   env_set        <- config_row$env_set
   run_id         <- config_row$run_id
-  
+
   # env set object
   env_info <- env_sets[[env_set]]
   if (is.null(env_info)) stop("env_set not found in env_sets: ", env_set)
-  
-  env_rast   <- terra::rast(env_info$files)
-  mask_layer <- env_rast[[1]]  # use first layer as valid-area mask
-  
+
   # paths
   run_dir <- file.path(out_dir, run_id)
   ensure_dir(run_dir)
-  
+
+  # Idempotencia: si el run ya está construido, reconstruir la fila de manifest
+  # desde disco (counts + bp_n recomputado) y devolver sin recomputar nada.
+  if (!force && dataset_artifacts_exist(run_dir)) {
+    message("  skip build (ya existe): ", run_id)
+    occ_n <- nrow(readr::read_csv(file.path(run_dir, "occ_processed.csv"), show_col_types = FALSE))
+    bg_n  <- nrow(readr::read_csv(file.path(run_dir, "background_points.csv"), show_col_types = FALSE))
+    ds_n  <- nrow(readr::read_csv(file.path(run_dir, "sdm_dataset.csv"), show_col_types = FALSE))
+    return(tibble(
+      run_id = run_id, species = species, occ_file = occ_file,
+      bias_method = bias_method, bias_param = bias_param,
+      bp_method = bp_method, bp_n_strategy = bp_n_strategy,
+      bp_n = get_bp_n(bp_n_strategy, n_presences = occ_n, fixed_bp_n = fixed_bp_n),
+      env_set = env_set,
+      n_occ_after_bias = occ_n, n_background = bg_n, n_final_rows = ds_n,
+      output_dir = run_dir
+    ))
+  }
+
+  env_rast   <- terra::rast(env_info$files)
+  mask_layer <- env_rast[[1]]  # use first layer as valid-area mask
+
   # 1) read occurrences
   occ_path <- file.path(occ_dir, occ_file)
   occ_df <- read_occurrences_csv(occ_path, lon_col = lon_col, lat_col = lat_col)
@@ -436,12 +463,13 @@ build_parallel_sdm_datasets <- function(config_table,
                                         lon_col = "decimalLongitude",
                                         lat_col = "decimalLatitude",
                                         fixed_bp_n = 10000L,
-                                        cols_to_keep = NA) {
+                                        cols_to_keep = NA,
+                                        force = FALSE) {
   ensure_dir(out_dir)
-  
+
   manifest <- purrr::map_dfr(seq_len(nrow(config_table)), function(i) {
     message("Running config ", i, "/", nrow(config_table), " -> ", config_table$run_id[i])
-    
+
     build_one_sdm_dataset(
       config_row = config_table[i, , drop = FALSE],
       env_sets = env_sets,
@@ -450,9 +478,10 @@ build_parallel_sdm_datasets <- function(config_table,
       lon_col = lon_col,
       lat_col = lat_col,
       fixed_bp_n = fixed_bp_n,
-      cols_to_keep = cols_to_keep
+      cols_to_keep = cols_to_keep,
+      force = force
     )
-    
+
   })
   
   readr::write_csv(manifest, file.path(out_dir, "manifest.csv"))

@@ -65,3 +65,18 @@ run_selection(
   predictor_cols_fn = predictors_minus_meta,
   suffix            = "_veg"
 )
+
+# 3) Bioclim + topografía -> selected_vars_topo.csv (alimenta bioclim_topo_reduced).
+run_selection(
+  ref_run_id        = "polyporaceae__bias-none__bp-random__bpn-fixed_10000__env-bioclim_topo",
+  predictor_cols_fn = predictors_minus_meta,
+  suffix            = "_topo"
+)
+
+# 4) Bioclim + vegetación + topografía -> selected_vars_veg_topo.csv
+#    (alimenta bioclim_veg_topo_reduced).
+run_selection(
+  ref_run_id        = "polyporaceae__bias-none__bp-random__bpn-fixed_10000__env-bioclim_veg_topo",
+  predictor_cols_fn = predictors_minus_meta,
+  suffix            = "_veg_topo"
+)

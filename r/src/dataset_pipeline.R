@@ -3,6 +3,11 @@ source("r/src/preprocessing.R")
 source("r/src/grid_thinning.R")
 source("r/src/build_parallel_sdm_datasets.R")
 
+# Idempotencia: por defecto se saltea cualquier etapa cuyo artefacto ya esté
+# en disco (download, preprocess, build). Forzar recómputo completo con
+# SDM_FORCE=1 (o true/yes) en el entorno: `SDM_FORCE=1 Rscript r/src/dataset_pipeline.R`.
+FORCE <- tolower(Sys.getenv("SDM_FORCE", "")) %in% c("1", "true", "t", "yes", "y")
+
 for (d in c("data/ocurrences/raw",
             "data/ocurrences/processed",
             "data/outputs/sdm_parallel",
@@ -49,7 +54,8 @@ res <- download_gbif_fungi_species_batch(
   species_list = species_config$scientific_name,
   country_code = "AR",
   max_records  = 10000,
-  out_dir      = raw_occ_dir
+  out_dir      = raw_occ_dir,
+  force        = FORCE
 )
 
 # ------------------------------------------------------------
@@ -58,11 +64,18 @@ res <- download_gbif_fungi_species_batch(
 
 for (i in seq_len(nrow(species_config))) {
   sp <- species_config$scientific_name[i]
+  pp_path <- species_csv(sp, processed_occ_dir)
+
+  if (!FORCE && file.exists(pp_path)) {
+    message("Skip preprocess (ya existe): ", pp_path)
+    next
+  }
+
   message("Preprocessing: ", sp)
 
   preprocess_dataset(
     df_path            = species_csv(sp, raw_occ_dir),
-    preproc_path       = species_csv(sp, processed_occ_dir),
+    preproc_path       = pp_path,
     min_year           = species_config$min_year[i],
     scientific_name    = sp,
     max_uncertainty_km = species_config$max_uncertainty_km[i],
@@ -82,11 +95,17 @@ species_table <- tibble::tibble(
 
 bioclim_files    <- list.files("data/features/env_2.5m_ar/bioclim", pattern = "tif$", full.names = TRUE)
 vegetation_files <- list.files("data/features/env_2.5m_ar/vegetation", pattern = "tif$", full.names = TRUE)
+topo_files       <- list.files("data/features/env_2.5m_ar/topography", pattern = "tif$", full.names = TRUE)
 
 env_sets <- list(
   bioclim     = list(files = bioclim_files),
   bioclim_veg = list(files = c(bioclim_files, vegetation_files))
 )
+# #25: topografía (solo si las capas ya fueron preparadas).
+if (length(topo_files) > 0) {
+  env_sets$bioclim_topo     <- list(files = c(bioclim_files, topo_files))
+  env_sets$bioclim_veg_topo <- list(files = c(bioclim_files, vegetation_files, topo_files))
+}
 
 # Identificador de variable, agnóstico a la resolución y robusto a nombres de
 # vegetación: para bioclim "wc2.1_30s_bio_11" y "wc2.1_2.5m_bio_11" -> "bio_11";
@@ -122,6 +141,18 @@ register_reduced_env_set(
   "data/outputs/env_selection/selected_vars_veg.csv",
   c(bioclim_files, vegetation_files)
 )
+# bioclim_topo_reduced: subset no colineal de bioclim + topografía.
+register_reduced_env_set(
+  "bioclim_topo_reduced",
+  "data/outputs/env_selection/selected_vars_topo.csv",
+  c(bioclim_files, topo_files)
+)
+# bioclim_veg_topo_reduced: subset no colineal de bioclim + vegetación + topografía.
+register_reduced_env_set(
+  "bioclim_veg_topo_reduced",
+  "data/outputs/env_selection/selected_vars_veg_topo.csv",
+  c(bioclim_files, vegetation_files, topo_files)
+)
 
 fixed_bp_n <- 10000L
 
@@ -140,7 +171,8 @@ manifest <- build_parallel_sdm_datasets(
   occ_dir      = processed_occ_dir,
   out_dir      = "data/outputs/sdm_parallel",
   fixed_bp_n   = fixed_bp_n,
-  cols_to_keep = NA
+  cols_to_keep = NA,
+  force        = FORCE
 )
 
 print(manifest)

@@ -39,6 +39,12 @@ BLOCK_SIZE_CAP_KM <- 300L
 CV_SCHEMES     <- c("spatial_block")
 ALGOS          <- c("maxnet", "ranger", "xgboost")
 
+# Idempotencia: por defecto se saltea cualquier (run × cv × algo) ya entrenado
+# en disco. Forzar reentrenamiento completo con SDM_FORCE=1 en el entorno.
+# Los helpers model_artifacts_exist() / read_basic_metrics() viven en
+# train_models.R (módulo puro, testeable).
+FORCE <- tolower(Sys.getenv("SDM_FORCE", "")) %in% c("1", "true", "t", "yes", "y")
+
 dir.create(MODELS_ROOT, recursive = TRUE, showWarnings = FALSE)
 
 # ------------------------------------------------------------
@@ -124,6 +130,17 @@ get_folds <- function(run_id, dataset_path) {
 
 train_one <- function(i, cv_scheme, algo) {
   run_id       <- datasets_manifest$run_id[i]
+  model_dir    <- file.path(MODELS_ROOT, run_id, cv_scheme, algo)
+
+  # Idempotencia: si el modelo ya está entrenado, devolver su fila básica desde
+  # disco sin reentrenar. El paso dual (evaluate_run_dir) igual relee las
+  # predicciones, así que el summary sale completo.
+  if (!FORCE && model_artifacts_exist(model_dir)) {
+    message("[", i, "/", nrow(datasets_manifest), "] ", run_id,
+            "  (", cv_scheme, " / ", algo, ")  [skip: ya entrenado]")
+    return(read_basic_metrics(model_dir))
+  }
+
   dataset_path <- file.path(DATASETS_ROOT, run_id, "sdm_dataset_model_ready.csv")
   hp           <- if (algo == "maxnet") list(regmult = REGMULT) else list()
 

@@ -71,25 +71,34 @@ download_gbif_fungi_species_batch <- function(
     country_code = "AR",
     max_records = 10000,
     out_dir = "data/ocurrences/raw",
-    has_coordinate = TRUE
+    has_coordinate = TRUE,
+    force = FALSE
 ) {
   stopifnot(is.character(species_list), length(species_list) > 0)
-  
+
   if (!dir.exists(out_dir)) {
     dir.create(out_dir, recursive = TRUE)
   }
-  
+
   results <- vector("list", length(species_list))
   names(results) <- species_list
-  
+
   for (sp in species_list) {
     safe_name <- gsub("[^a-z0-9]+", "_", tolower(sp))
     safe_name <- gsub("^_|_$", "", safe_name)
-    
+
     save_path <- file.path(out_dir, paste0("df_", safe_name, ".csv"))
-    
+
+    # Idempotencia: si el crudo ya está en disco, no re-descargar (a menos
+    # que force = TRUE). El valor de retorno no se usa aguas abajo (preprocess
+    # lee del archivo), así que dejamos results[[sp]] = NULL en el skip.
+    if (!force && file.exists(save_path)) {
+      message("Skip download (ya existe): ", save_path)
+      next
+    }
+
     message("Downloading species: ", sp)
-    
+
     df <- download_gbif_fungi_species(
       species_name = sp,
       country_code = country_code,

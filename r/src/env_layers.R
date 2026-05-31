@@ -48,3 +48,15 @@ temporal_amplitude <- function(stack) {
 fill_na <- function(rast, value = 0) {
   terra::ifel(is.na(rast), value, rast)
 }
+
+# Fracción de celdas NA entre las celdas que caen dentro de una región.
+# QA de cobertura: ~0 indica que la capa cubre toda la tierra de la región.
+# Enmascara el raster a la región (las celdas fuera quedan NA y no cuentan),
+# luego divide NA-interiores / total-de-celdas-cubiertas-por-la-region.
+interior_na_fraction <- function(rast, region_vect) {
+  inside <- terra::rasterize(region_vect, rast)            # 1 dentro, NA fuera
+  n_inside <- terra::global(!is.na(inside), "sum", na.rm = TRUE)[[1]]
+  if (n_inside == 0) return(NA_real_)
+  na_inside <- terra::global(is.na(rast) & !is.na(inside), "sum", na.rm = TRUE)[[1]]
+  na_inside / n_inside
+}
