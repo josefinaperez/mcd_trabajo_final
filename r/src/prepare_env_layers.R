@@ -22,6 +22,9 @@ NDVI_DIR    <- "data/features/vegetation_raw/modis_ndvi"
 CANOPY_PATH <- "data/features/vegetation_raw/inta_forest/canopy_height.tif"
 OUT_BIO     <- "data/features/env_2.5m_ar/bioclim"
 OUT_VEG     <- "data/features/env_2.5m_ar/vegetation"
+TOPO_RAW_DIR <- "data/features/topography_raw"   # subdirs: cti, slope, tpi, tri
+TOPO_VARS    <- c("cti", "slope", "tpi", "tri")  # cti = TWI/CTI; tri = ruggedness
+OUT_TOPO     <- "data/features/env_2.5m_ar/topography"
 
 # ---- #24: grilla de referencia (WorldClim 2.5m recortado a Argentina) ----
 # Devuelve el template (capa de referencia para alinear todo lo demás).
@@ -82,6 +85,31 @@ build_vegetation_layers <- function(template) {
   message("capas de vegetación: tree_cover_pct, ndvi_mean, ndvi_seasonality, canopy_height escritas")
 }
 
+# ---- #25: capas topográficas (Geomorpho90m) alineadas al template ----
+# Cada variable son tiles 90m: VRT (mosaico virtual) -> warp GDAL a ~270m con
+# -r average (downsamplea agregando, usa overviews si existen) -> align_to_template
+# (270m -> 2.5 arc-min) -> crop_mask (recorta y re-enmascara océano a NA).
+# NO se rellenan NA: en topografía NA = sin dato (no "ausencia"), y Geomorpho90m
+# cubre toda la tierra; crop_mask deja el océano como NA.
+build_topography_layers <- function(template) {
+  dir.create(OUT_TOPO, recursive = TRUE, showWarnings = FALSE)
+  ar <- terra::vect(SHP_PATH)
+  for (v in TOPO_VARS) {
+    tiles <- list.files(file.path(TOPO_RAW_DIR, v), pattern = "tif$", full.names = TRUE)
+    vrt_path  <- tempfile(fileext = ".vrt")
+    down_path <- tempfile(fileext = ".tif")
+    terra::vrt(tiles, filename = vrt_path, overwrite = TRUE)
+    sf::gdal_utils("warp", source = vrt_path, destination = down_path,
+                   options = c("-tr", "0.0025", "0.0025", "-r", "average",
+                               "-co", "COMPRESS=LZW"))
+    layer <- crop_mask_to_region(
+      align_to_template(terra::rast(down_path), template), ar)
+    names(layer) <- v
+    terra::writeRaster(layer, file.path(OUT_TOPO, paste0(v, ".tif")), overwrite = TRUE)
+  }
+  message("capas topográficas: ", paste(TOPO_VARS, collapse = ", "), " escritas")
+}
+
 # ---- main ----
 template <- build_reference_grid()
 
@@ -98,4 +126,17 @@ if (veg_ready) {
                   if (!length(list.files(NDVI_DIR, pattern = "tif$"))) "modis_ndvi",
                   if (!file.exists(CANOPY_PATH)) "canopy_height"), collapse = ", "),
           "). Re-correr cuando estén.")
+}
+
+topo_ready <- all(vapply(TOPO_VARS, function(v)
+  length(list.files(file.path(TOPO_RAW_DIR, v), pattern = "tif$")) > 0, logical(1)))
+
+if (topo_ready) {
+  build_topography_layers(template)
+  message("prepare_env_layers: topografía OK")
+} else {
+  faltan <- TOPO_VARS[!vapply(TOPO_VARS, function(v)
+    length(list.files(file.path(TOPO_RAW_DIR, v), pattern = "tif$")) > 0, logical(1))]
+  message("prepare_env_layers: topografía OMITIDA (faltan insumos: ",
+          paste(faltan, collapse = ", "), "). Re-correr cuando estén.")
 }
