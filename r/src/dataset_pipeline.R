@@ -3,6 +3,11 @@ source("r/src/preprocessing.R")
 source("r/src/grid_thinning.R")
 source("r/src/build_parallel_sdm_datasets.R")
 
+# Idempotencia: por defecto se saltea cualquier etapa cuyo artefacto ya esté
+# en disco (download, preprocess, build). Forzar recómputo completo con
+# SDM_FORCE=1 (o true/yes) en el entorno: `SDM_FORCE=1 Rscript r/src/dataset_pipeline.R`.
+FORCE <- tolower(Sys.getenv("SDM_FORCE", "")) %in% c("1", "true", "t", "yes", "y")
+
 for (d in c("data/ocurrences/raw",
             "data/ocurrences/processed",
             "data/outputs/sdm_parallel",
@@ -49,7 +54,8 @@ res <- download_gbif_fungi_species_batch(
   species_list = species_config$scientific_name,
   country_code = "AR",
   max_records  = 10000,
-  out_dir      = raw_occ_dir
+  out_dir      = raw_occ_dir,
+  force        = FORCE
 )
 
 # ------------------------------------------------------------
@@ -58,11 +64,18 @@ res <- download_gbif_fungi_species_batch(
 
 for (i in seq_len(nrow(species_config))) {
   sp <- species_config$scientific_name[i]
+  pp_path <- species_csv(sp, processed_occ_dir)
+
+  if (!FORCE && file.exists(pp_path)) {
+    message("Skip preprocess (ya existe): ", pp_path)
+    next
+  }
+
   message("Preprocessing: ", sp)
 
   preprocess_dataset(
     df_path            = species_csv(sp, raw_occ_dir),
-    preproc_path       = species_csv(sp, processed_occ_dir),
+    preproc_path       = pp_path,
     min_year           = species_config$min_year[i],
     scientific_name    = sp,
     max_uncertainty_km = species_config$max_uncertainty_km[i],
@@ -158,7 +171,8 @@ manifest <- build_parallel_sdm_datasets(
   occ_dir      = processed_occ_dir,
   out_dir      = "data/outputs/sdm_parallel",
   fixed_bp_n   = fixed_bp_n,
-  cols_to_keep = NA
+  cols_to_keep = NA,
+  force        = FORCE
 )
 
 print(manifest)

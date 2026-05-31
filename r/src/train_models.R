@@ -253,6 +253,33 @@ save_model_artifacts <- function(run_id,
 }
 
 # ------------------------------------------------------------
+# 6b) IDEMPOTENCIA: detectar y reusar un modelo ya entrenado
+# ------------------------------------------------------------
+#
+# Columnas básicas que devuelve run_model_spatial_block (las threshold-
+# dependent las completa luego evaluate_run_dir). Al saltear un modelo,
+# reconstruimos esta fila desde su metrics.csv para no romper el armado
+# del manifest aguas arriba.
+BASIC_METRIC_COLS <- c("run_id", "algorithm", "cv_scheme", "train_secs",
+                       "n_train_pres", "n_train_bg", "n_test_pres", "n_test_bg",
+                       "auc_test", "auc_test_sd", "k_folds")
+
+# TRUE si el run_dir de un modelo tiene los artefactos mínimos de un
+# entrenamiento completo (modelo + predicciones + métricas).
+model_artifacts_exist <- function(model_dir) {
+  all(file.exists(file.path(model_dir,
+                            c("model.rds", "predictions_test.csv", "metrics.csv"))))
+}
+
+# Lee del metrics.csv persistido sólo las columnas básicas (mismo shape que
+# devuelve run_model_spatial_block), descartando las threshold-dependent que
+# evaluate_run_dir recomputa.
+read_basic_metrics <- function(model_dir) {
+  m <- readr::read_csv(file.path(model_dir, "metrics.csv"), show_col_types = FALSE)
+  dplyr::select(m, dplyr::any_of(BASIC_METRIC_COLS))
+}
+
+# ------------------------------------------------------------
 # 7) ONE-SHOT WRAPPER (holdout)
 # ------------------------------------------------------------
 
