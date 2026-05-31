@@ -44,6 +44,8 @@ rmarkdown::render("r/notebooks/stage4_xai.Rmd")
 
 **Convention**: scripts under `r/src/` do all the computation and write artifacts to disk. Notebooks under `r/notebooks/` are **display-only** — they `read_csv` / `include_graphics` from `data/outputs/...` and never train, fit, or transform. If a notebook needs new data, add it to the corresponding `*_pipeline.R` first.
 
+**Idempotency**: `dataset_pipeline.R` and `train_pipeline.R` are **skip-if-exists** by default — already-downloaded occurrences, already-built datasets, and already-trained `(run × cv × algo)` models are detected on disk and reused (their manifest/metrics rows are reconstructed from the persisted CSVs, so the summary stays complete). This makes adding a new `env_set` cheap: only the new configs train. Set `SDM_FORCE=1` (or `true`/`yes`) in the environment to force a full recompute: `SDM_FORCE=1 Rscript r/src/train_pipeline.R`. Use `force = TRUE` when calling the builder functions directly. Note this is a **content-blind** skip (presence of the output files), so after changing the code that *produces* an artifact, force a rebuild of the affected runs.
+
 The active RStudio project is `r/mcd_trabajo_final.Rproj`. The top-level `mcd_trabajo_final.Rproj` is stale.
 
 ## Architecture
