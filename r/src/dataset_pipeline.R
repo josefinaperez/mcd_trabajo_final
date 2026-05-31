@@ -82,11 +82,17 @@ species_table <- tibble::tibble(
 
 bioclim_files    <- list.files("data/features/env_2.5m_ar/bioclim", pattern = "tif$", full.names = TRUE)
 vegetation_files <- list.files("data/features/env_2.5m_ar/vegetation", pattern = "tif$", full.names = TRUE)
+topo_files       <- list.files("data/features/env_2.5m_ar/topography", pattern = "tif$", full.names = TRUE)
 
 env_sets <- list(
   bioclim     = list(files = bioclim_files),
   bioclim_veg = list(files = c(bioclim_files, vegetation_files))
 )
+# #25: topografía (solo si las capas ya fueron preparadas).
+if (length(topo_files) > 0) {
+  env_sets$bioclim_topo     <- list(files = c(bioclim_files, topo_files))
+  env_sets$bioclim_veg_topo <- list(files = c(bioclim_files, vegetation_files, topo_files))
+}
 
 # Identificador de variable, agnóstico a la resolución y robusto a nombres de
 # vegetación: para bioclim "wc2.1_30s_bio_11" y "wc2.1_2.5m_bio_11" -> "bio_11";
