@@ -96,6 +96,7 @@ species_table <- tibble::tibble(
 bioclim_files    <- list.files("data/features/env_2.5m_ar/bioclim", pattern = "tif$", full.names = TRUE)
 vegetation_files <- list.files("data/features/env_2.5m_ar/vegetation", pattern = "tif$", full.names = TRUE)
 topo_files       <- list.files("data/features/env_2.5m_ar/topography", pattern = "tif$", full.names = TRUE)
+soil_files       <- list.files("data/features/env_2.5m_ar/soil", pattern = "tif$", full.names = TRUE)
 
 env_sets <- list(
   bioclim     = list(files = bioclim_files),
@@ -105,6 +106,11 @@ env_sets <- list(
 if (length(topo_files) > 0) {
   env_sets$bioclim_topo     <- list(files = c(bioclim_files, topo_files))
   env_sets$bioclim_veg_topo <- list(files = c(bioclim_files, vegetation_files, topo_files))
+}
+# #26: suelo (solo si las capas ya fueron preparadas).
+if (length(soil_files) > 0) {
+  env_sets$bioclim_soil     <- list(files = c(bioclim_files, soil_files))
+  env_sets$bioclim_veg_soil <- list(files = c(bioclim_files, vegetation_files, soil_files))
 }
 
 # Identificador de variable, agnóstico a la resolución y robusto a nombres de
@@ -152,6 +158,18 @@ register_reduced_env_set(
   "bioclim_veg_topo_reduced",
   "data/outputs/env_selection/selected_vars_veg_topo.csv",
   c(bioclim_files, vegetation_files, topo_files)
+)
+# bioclim_soil_reduced: subset no colineal de bioclim + suelo.
+register_reduced_env_set(
+  "bioclim_soil_reduced",
+  "data/outputs/env_selection/selected_vars_soil.csv",
+  c(bioclim_files, soil_files)
+)
+# bioclim_veg_soil_reduced: subset no colineal de bioclim + vegetación + suelo.
+register_reduced_env_set(
+  "bioclim_veg_soil_reduced",
+  "data/outputs/env_selection/selected_vars_veg_soil.csv",
+  c(bioclim_files, vegetation_files, soil_files)
 )
 
 fixed_bp_n <- 10000L

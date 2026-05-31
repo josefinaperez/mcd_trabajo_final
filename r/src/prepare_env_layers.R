@@ -25,6 +25,9 @@ OUT_VEG     <- "data/features/env_2.5m_ar/vegetation"
 TOPO_RAW_DIR <- "data/features/topography_raw"   # subdirs: cti, slope, tpi, tri
 TOPO_VARS    <- c("cti", "slope", "tpi", "tri")  # cti = TWI/CTI; tri = ruggedness
 OUT_TOPO     <- "data/features/env_2.5m_ar/topography"
+SOIL_RAW_DIR <- "data/features/soil_raw"   # subdirs: phh2o, soc, sand, silt, clay, cec, bdod
+SOIL_VARS    <- c("phh2o", "soc", "sand", "silt", "clay", "cec", "bdod")
+OUT_SOIL     <- "data/features/env_2.5m_ar/soil"
 
 # ---- #24: grilla de referencia (WorldClim 2.5m recortado a Argentina) ----
 # Devuelve el template (capa de referencia para alinear todo lo demás).
@@ -85,17 +88,15 @@ build_vegetation_layers <- function(template) {
   message("capas de vegetación: tree_cover_pct, ndvi_mean, ndvi_seasonality, canopy_height escritas")
 }
 
-# ---- #25: capas topográficas (Geomorpho90m) alineadas al template ----
-# Cada variable son tiles 90m: VRT (mosaico virtual) -> warp GDAL a ~270m con
-# -r average (downsamplea agregando, usa overviews si existen) -> align_to_template
-# (270m -> 2.5 arc-min) -> crop_mask (recorta y re-enmascara océano a NA).
-# NO se rellenan NA: en topografía NA = sin dato (no "ausencia"), y Geomorpho90m
-# cubre toda la tierra; crop_mask deja el océano como NA.
-build_topography_layers <- function(template) {
-  dir.create(OUT_TOPO, recursive = TRUE, showWarnings = FALSE)
-  ar <- terra::vect(SHP_PATH)
-  for (v in TOPO_VARS) {
-    tiles <- list.files(file.path(TOPO_RAW_DIR, v), pattern = "tif$", full.names = TRUE)
+# Procesamiento común para familias de capas continuas que se downsamplean
+# agregando: por cada variable, VRT(tiles) -> warp GDAL a ~270m con -r average
+# (usa overviews si existen) -> align_to_template (270m -> 2.5 arc-min) ->
+# crop_mask (recorta y re-enmascara océano a NA). NO rellena NA: un NA es
+# "sin dato", no una categoría ecológica; crop_mask deja el océano como NA.
+build_aggregated_layers <- function(raw_dir, vars, out_dir, template, ar) {
+  dir.create(out_dir, recursive = TRUE, showWarnings = FALSE)
+  for (v in vars) {
+    tiles <- list.files(file.path(raw_dir, v), pattern = "tif$", full.names = TRUE)
     vrt_path  <- tempfile(fileext = ".vrt")
     down_path <- tempfile(fileext = ".tif")
     terra::vrt(tiles, filename = vrt_path, overwrite = TRUE)
@@ -105,9 +106,24 @@ build_topography_layers <- function(template) {
     layer <- crop_mask_to_region(
       align_to_template(terra::rast(down_path), template), ar)
     names(layer) <- v
-    terra::writeRaster(layer, file.path(OUT_TOPO, paste0(v, ".tif")), overwrite = TRUE)
+    terra::writeRaster(layer, file.path(out_dir, paste0(v, ".tif")), overwrite = TRUE)
   }
+}
+
+# ---- #25: capas topográficas (Geomorpho90m) alineadas al template ----
+build_topography_layers <- function(template) {
+  ar <- terra::vect(SHP_PATH)
+  build_aggregated_layers(TOPO_RAW_DIR, TOPO_VARS, OUT_TOPO, template, ar)
   message("capas topográficas: ", paste(TOPO_VARS, collapse = ", "), " escritas")
+}
+
+# ---- #26: capas de suelo (SoilGrids 250m, 0-5 cm) ----
+# Mismo procesamiento agregado que topografía. Los .tif crudos vienen ya
+# rescalados a unidades convencionales desde el export de GEE.
+build_soil_layers <- function(template) {
+  ar <- terra::vect(SHP_PATH)
+  build_aggregated_layers(SOIL_RAW_DIR, SOIL_VARS, OUT_SOIL, template, ar)
+  message("capas de suelo: ", paste(SOIL_VARS, collapse = ", "), " escritas")
 }
 
 # ---- main ----
@@ -138,5 +154,18 @@ if (topo_ready) {
   faltan <- TOPO_VARS[!vapply(TOPO_VARS, function(v)
     length(list.files(file.path(TOPO_RAW_DIR, v), pattern = "tif$")) > 0, logical(1))]
   message("prepare_env_layers: topografía OMITIDA (faltan insumos: ",
+          paste(faltan, collapse = ", "), "). Re-correr cuando estén.")
+}
+
+soil_ready <- all(vapply(SOIL_VARS, function(v)
+  length(list.files(file.path(SOIL_RAW_DIR, v), pattern = "tif$")) > 0, logical(1)))
+
+if (soil_ready) {
+  build_soil_layers(template)
+  message("prepare_env_layers: suelo OK")
+} else {
+  faltan <- SOIL_VARS[!vapply(SOIL_VARS, function(v)
+    length(list.files(file.path(SOIL_RAW_DIR, v), pattern = "tif$")) > 0, logical(1))]
+  message("prepare_env_layers: suelo OMITIDO (faltan insumos: ",
           paste(faltan, collapse = ", "), "). Re-correr cuando estén.")
 }
