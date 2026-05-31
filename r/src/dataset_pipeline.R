@@ -128,6 +128,18 @@ register_reduced_env_set(
   "data/outputs/env_selection/selected_vars_veg.csv",
   c(bioclim_files, vegetation_files)
 )
+# bioclim_topo_reduced: subset no colineal de bioclim + topografía.
+register_reduced_env_set(
+  "bioclim_topo_reduced",
+  "data/outputs/env_selection/selected_vars_topo.csv",
+  c(bioclim_files, topo_files)
+)
+# bioclim_veg_topo_reduced: subset no colineal de bioclim + vegetación + topografía.
+register_reduced_env_set(
+  "bioclim_veg_topo_reduced",
+  "data/outputs/env_selection/selected_vars_veg_topo.csv",
+  c(bioclim_files, vegetation_files, topo_files)
+)
 
 fixed_bp_n <- 10000L
 
