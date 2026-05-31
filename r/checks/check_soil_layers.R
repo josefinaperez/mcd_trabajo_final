@@ -15,8 +15,10 @@ OUT_SOIL  <- "data/features/env_2.5m_ar/soil"
 OUT_BIO   <- "data/features/env_2.5m_ar/bioclim"
 SHP_PATH  <- "data/shp/argentina/argentina.shp"
 SOIL_VARS <- c("phh2o", "soc", "sand", "silt", "clay", "cec", "bdod")
-NA_TOL    <- 0.03   # tolerancia de NA interior (3%): SoilGrids puede tener
-                    # huecos sobre agua/salares.
+NA_TOL    <- 0.05   # tolerancia de NA interior (5%): empíricamente SoilGrids
+                    # tiene ~3% de NA sobre tierra en Argentina (cuerpos de agua,
+                    # salares). NO se rellena (NA = sin dato de suelo, no una
+                    # categoría); esas filas las descarta el filtro del builder.
 
 ok <- function(msg) cat("OK:", msg, "\n")
 
