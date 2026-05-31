@@ -85,17 +85,15 @@ build_vegetation_layers <- function(template) {
   message("capas de vegetación: tree_cover_pct, ndvi_mean, ndvi_seasonality, canopy_height escritas")
 }
 
-# ---- #25: capas topográficas (Geomorpho90m) alineadas al template ----
-# Cada variable son tiles 90m: VRT (mosaico virtual) -> warp GDAL a ~270m con
-# -r average (downsamplea agregando, usa overviews si existen) -> align_to_template
-# (270m -> 2.5 arc-min) -> crop_mask (recorta y re-enmascara océano a NA).
-# NO se rellenan NA: en topografía NA = sin dato (no "ausencia"), y Geomorpho90m
-# cubre toda la tierra; crop_mask deja el océano como NA.
-build_topography_layers <- function(template) {
-  dir.create(OUT_TOPO, recursive = TRUE, showWarnings = FALSE)
-  ar <- terra::vect(SHP_PATH)
-  for (v in TOPO_VARS) {
-    tiles <- list.files(file.path(TOPO_RAW_DIR, v), pattern = "tif$", full.names = TRUE)
+# Procesamiento común para familias de capas continuas que se downsamplean
+# agregando: por cada variable, VRT(tiles) -> warp GDAL a ~270m con -r average
+# (usa overviews si existen) -> align_to_template (270m -> 2.5 arc-min) ->
+# crop_mask (recorta y re-enmascara océano a NA). NO rellena NA: un NA es
+# "sin dato", no una categoría ecológica; crop_mask deja el océano como NA.
+build_aggregated_layers <- function(raw_dir, vars, out_dir, template, ar) {
+  dir.create(out_dir, recursive = TRUE, showWarnings = FALSE)
+  for (v in vars) {
+    tiles <- list.files(file.path(raw_dir, v), pattern = "tif$", full.names = TRUE)
     vrt_path  <- tempfile(fileext = ".vrt")
     down_path <- tempfile(fileext = ".tif")
     terra::vrt(tiles, filename = vrt_path, overwrite = TRUE)
@@ -105,8 +103,14 @@ build_topography_layers <- function(template) {
     layer <- crop_mask_to_region(
       align_to_template(terra::rast(down_path), template), ar)
     names(layer) <- v
-    terra::writeRaster(layer, file.path(OUT_TOPO, paste0(v, ".tif")), overwrite = TRUE)
+    terra::writeRaster(layer, file.path(out_dir, paste0(v, ".tif")), overwrite = TRUE)
   }
+}
+
+# ---- #25: capas topográficas (Geomorpho90m) alineadas al template ----
+build_topography_layers <- function(template) {
+  ar <- terra::vect(SHP_PATH)
+  build_aggregated_layers(TOPO_RAW_DIR, TOPO_VARS, OUT_TOPO, template, ar)
   message("capas topográficas: ", paste(TOPO_VARS, collapse = ", "), " escritas")
 }
 
