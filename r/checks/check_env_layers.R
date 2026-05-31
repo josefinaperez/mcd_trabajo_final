@@ -72,4 +72,22 @@ filled <- fill_na(rna, 0)
 stopifnot(all(terra::values(filled) == c(0, 5, 0, 7)))
 ok("fill_na")
 
+# ---- interior_na_fraction ----
+# Grilla 4x4 dentro de un bbox; polígono cubre la mitad izquierda (cols 1-2).
+# Ponemos NA en una celda interior (dentro del polígono) y NA en una celda
+# exterior (fuera). La fracción debe contar solo la interior: 1 de 8 = 0.125.
+rqa <- terra::rast(nrows = 4, ncols = 4,
+                   xmin = 0, xmax = 4, ymin = 0, ymax = 4, crs = "EPSG:4326")
+terra::values(rqa) <- 1
+# columnas 1-2 = x in [0,2]; rellenamos: NA interior en (col1, fila1) y
+# NA exterior en (col4, fila1).
+m <- terra::as.matrix(rqa, wide = TRUE)
+m[1, 1] <- NA   # interior (dentro del polígono)
+m[1, 4] <- NA   # exterior (fuera del polígono)
+terra::values(rqa) <- as.vector(t(m))
+reg <- terra::vect("POLYGON((0 0, 2 0, 2 4, 0 4, 0 0))", crs = "EPSG:4326")
+frac_na <- interior_na_fraction(rqa, reg)
+stopifnot(abs(frac_na - (1 / 8)) < 1e-9)   # 8 celdas interiores, 1 NA
+ok("interior_na_fraction")
+
 cat("\nTODOS LOS CHEQUEOS OK\n")
