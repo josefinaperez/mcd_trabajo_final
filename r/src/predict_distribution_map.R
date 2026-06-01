@@ -122,7 +122,7 @@ binarize_raster <- function(suit_r, threshold) {
 #
 # Compone dos paneles lado a lado: idoneidad continua con
 # escala viridis y mapa binario en τ*. Sobre ambos se
-# superponen las presencias GBIF del run (alpha bajo). Se
+# superponen las presencias GBIF del run. Se
 # usa tidyterra::geom_spatraster para que los SpatRaster
 # se integren limpiamente con ggplot.
 # ------------------------------------------------------------
@@ -145,7 +145,7 @@ plot_map_panel <- function(suit_r, bin_r, run_id, threshold, occ_points) {
       data = occ_points,
       aes(x = decimalLongitude, y = decimalLatitude),
       colour = "white", fill = "black",
-      shape = 21, size = 0.6, stroke = 0.2, alpha = 0.55
+      shape = 21, size = 1.2, stroke = 0.2, alpha = 0.9
     ) +
     coord_sf(crs = 4326) +
     labs(title = "Idoneidad ambiental (continua)") +
@@ -164,7 +164,7 @@ plot_map_panel <- function(suit_r, bin_r, run_id, threshold, occ_points) {
       data = occ_points,
       aes(x = decimalLongitude, y = decimalLatitude),
       colour = "white", fill = "black",
-      shape = 21, size = 0.6, stroke = 0.2, alpha = 0.55
+      shape = 21, size = 1.2, stroke = 0.2, alpha = 0.9
     ) +
     coord_sf(crs = 4326) +
     labs(title = "Presencia / no apto (binario)") +
