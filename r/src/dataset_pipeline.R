@@ -36,15 +36,16 @@ species_csv <- function(scientific_name, dir) {
 
 species_config <- tibble::tribble(
   ~scientific_name,         ~min_year, ~max_uncertainty_km,
-  "Polyporaceae",                 1945,                  10
-  # "Pycnoporus sanguineus",      1945,                  10,
-  # "Ganoderma applanatum",       1945,                  10
+  "Polyporaceae",                 2010,                   5
+  # "Pycnoporus sanguineus",      2010,                   5,
+  # "Ganoderma applanatum",       2010,                   5
 )
 
 raw_occ_dir       <- "data/ocurrences/raw"
 processed_occ_dir <- "data/ocurrences/processed"
 shp_path          <- "data/shp/argentina/argentina.shp"
-tests_default     <- c("equal", "duplicates", "outliers", "zeros")
+tests_default     <- c("equal", "duplicates", "outliers", "zeros",
+                       "institutions", "centroids", "capitals")
 
 # ------------------------------------------------------------
 # 0) DOWNLOAD SPECIES DATA FROM GBIF
