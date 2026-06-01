@@ -106,5 +106,5 @@ The `manifest.csv` files are the integration contract between stages. The datase
 ## Caveats when editing
 
 - **`r/src/borrador/`** is a scratch/draft folder ("borrador" = draft). Don't treat its contents as authoritative when refactoring.
-- Two background-generation paths exist in `build_parallel_sdm_datasets.R`: a raster-mask `generate_background_points()` (currently commented out) and `sample_random_background_from_shp()` (currently active). The shapefile-based one is marked "provisorio" — the intent per the in-file comment is to eventually intersect raster validity with the Argentina polygon.
+- Background generation in `build_parallel_sdm_datasets.R` uses `generate_background_points()` → `sample_random_background()`, which samples over a per-`env_set` validity mask (`valid_mask <- sum(env_rast)`: NA wherever any layer is NA). Since the `env_2.5m_ar/` layers are already clipped to Argentina, this is the intersection of raster validity ∩ the country polygon, so no background falls in NA cells (issue #37). The old shapefile sampler (`sample_random_background_from_shp()`) was removed.
 - `bias_method = "grid_thin"` paths in `build_one_sdm_dataset` require `grid_thin_gbif()` to be in scope; `dataset_pipeline.R` sources it transitively, so re-source the pipeline rather than calling builder helpers directly.

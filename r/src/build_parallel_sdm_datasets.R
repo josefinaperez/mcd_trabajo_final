@@ -73,26 +73,38 @@ sample_random_background <- function(mask_raster,
                                      n = 10000,
                                      seed = 42,
                                      lon_col = "decimalLongitude",
-                                     lat_col = "decimalLatitude") {
+                                     lat_col = "decimalLatitude",
+                                     max_attempts = 8) {
   set.seed(seed)
-  
-  # sample only from non-NA cells
-  pts <- terra::spatSample(
-    x = mask_raster,
-    size = n,
-    method = "random",
-    na.rm = TRUE,
-    as.points = TRUE,
-    values = FALSE
-  )
-  
-  if (is.null(pts) || nrow(pts) == 0) {
+
+  # spatSample(na.rm = TRUE) puede devolver menos de `size` porque descarta
+  # las celdas NA del bounding box (todo lo externo a Argentina + huecos de
+  # validez). Oversampleamos y acumulamos hasta juntar n celdas válidas únicas.
+  have    <- NULL
+  attempt <- 0L
+  while ((is.null(have) || nrow(have) < n) && attempt < max_attempts) {
+    attempt <- attempt + 1L
+    pts <- terra::spatSample(
+      x = mask_raster, size = n * 3L, method = "random",
+      na.rm = TRUE, as.points = TRUE, values = FALSE
+    )
+    if (!is.null(pts) && nrow(pts) > 0) {
+      d    <- as.data.frame(terra::crds(pts))
+      have <- if (is.null(have)) d else unique(rbind(have, d))
+    }
+  }
+
+  if (is.null(have) || nrow(have) == 0) {
     stop("Could not generate random background points from mask raster.")
   }
-  
-  pts_df <- as.data.frame(terra::crds(pts))
+  if (nrow(have) < n) {
+    warning(sprintf("sample_random_background: solo %d celdas válidas únicas (< n = %d).",
+                    nrow(have), n))
+  }
+
+  pts_df <- have[seq_len(min(n, nrow(have))), , drop = FALSE]
   names(pts_df) <- c(lon_col, lat_col)
-  
+  rownames(pts_df) <- NULL
   pts_df
 }
 
@@ -235,72 +247,6 @@ generate_background_points <- function(bp_method = "random",
 }
 
 
-###### sample_random_background_from_shp
-#### Provisorio para sacar puntos de un shp
-#### Luego debería hacerse un híbrido, sacar puntos de la intersección
-#### del shp de arg con los rasters de vars ambientales!!!
-
-sample_random_background_from_shp <- function(shp_path,
-                                              n = 10000,
-                                              seed = 42,
-                                              lon_col = "decimalLongitude",
-                                              lat_col = "decimalLatitude",
-                                              max_attempts = 5,
-                                              oversample_factor = 3) {
-  set.seed(seed)
-
-  # Leer shapefile
-  study_area <- st_read(shp_path, quiet = TRUE)
-
-  # Asegurar geometrías válidas
-  study_area <- st_make_valid(study_area)
-
-  # Unificar en una sola geometría por si hay varias partes
-  study_area <- st_union(study_area)
-
-  # Convertir a sf
-  study_area <- st_as_sf(study_area)
-
-  # st_sample con type = "random" devuelve aproximadamente `size` puntos
-  # (proceso Poisson). Para n chico puede dar 0; oversampleamos y recortamos.
-  # Acumulamos en lista de sfc y concatenamos con do.call(c, ...) para
-  # preservar la clase sfc (c(list(), sfc) la pierde).
-  batches <- vector("list", 0)
-  n_have  <- 0L
-  attempt <- 0L
-
-  while (n_have < n && attempt < max_attempts) {
-    attempt <- attempt + 1L
-    target  <- max(n * oversample_factor, 50L)
-    new_pts <- st_sample(study_area, size = target, type = "random")
-    if (length(new_pts) > 0) {
-      batches[[length(batches) + 1L]] <- new_pts
-      n_have <- n_have + length(new_pts)
-    }
-  }
-
-  if (n_have == 0) {
-    stop("No se pudieron generar puntos aleatorios dentro del shapefile.")
-  }
-
-  pts <- do.call(c, batches)
-  if (length(pts) > n) pts <- pts[seq_len(n)]
-
-  pts_sf <- st_sf(geometry = pts, crs = st_crs(study_area))
-  
-  # Pasar a lon/lat si hiciera falta
-  pts_sf <- st_transform(pts_sf, 4326)
-  
-  coords <- st_coordinates(pts_sf)
-  
-  pts_df <- setNames(
-    data.frame(coords[, 1], coords[, 2]),
-    c(lon_col, lat_col)
-  )
-  
-  pts_df
-}
-
 # ============================================================
 # 4) BUILD ONE DATASET CONFIG
 # ============================================================
@@ -353,7 +299,14 @@ build_one_sdm_dataset <- function(config_row,
   }
 
   env_rast   <- terra::rast(env_info$files)
-  mask_layer <- env_rast[[1]]  # use first layer as valid-area mask
+  # #37: máscara de validez = celdas con dato en TODAS las capas del env_set.
+  # Como los rásters de env_2.5m_ar/ ya vienen recortados a Argentina, esto
+  # equivale a la intersección validez-ráster ∩ polígono del país. sum()
+  # propaga NA: una celda con NA en cualquier capa queda NA y no se muestrea
+  # como background (evita filas que luego se descartarían). La intersección
+  # es por env_set, de modo que cada conjunto muestrea su dominio real (p. ej.
+  # las capas de suelo, con más NA, restringen el fondo de los env_set de suelo).
+  valid_mask <- sum(env_rast)
 
   # 1) read occurrences
   occ_path <- file.path(occ_dir, occ_file)
@@ -379,20 +332,11 @@ build_one_sdm_dataset <- function(config_row,
     fixed_bp_n = fixed_bp_n
   )
 
-  # bg_df <- generate_background_points(
-  #   bp_method = bp_method,
-  #   bp_params = list(n = bp_n, seed = 42),
-  #   mask_raster = mask_layer,
-  #   occ_df = occ_processed,
-  #   lon_col = lon_col,
-  #   lat_col = lat_col
-  # ) |>
-  #   mutate(class = 0L)
-  
-  bg_df <- sample_random_background_from_shp(
-    shp_path = "data/shp/argentina/argentina.shp",
-    n = bp_n,
-    seed = 42,
+  bg_df <- generate_background_points(
+    bp_method = bp_method,
+    bp_params = list(n = bp_n, seed = 42),
+    mask_raster = valid_mask,
+    occ_df = occ_processed,
     lon_col = lon_col,
     lat_col = lat_col
   ) |>
