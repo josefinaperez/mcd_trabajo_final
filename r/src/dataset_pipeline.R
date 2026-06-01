@@ -173,6 +173,25 @@ register_reduced_env_set(
   c(bioclim_files, vegetation_files, soil_files)
 )
 
+# #45: estandarizar en los env_sets _reduced. La reducción de colinealidad es
+# el paso estándar en SDM (Dormann et al. 2013) y se justifica para que la
+# interpretación del ganador (XAI) sea limpia. Los env_sets *full* (sin filtro)
+# se siguen definiendo arriba porque son (a) candidatos de register_reduced_env_set
+# y (b) los datasets de referencia que env_selection_pipeline.R necesita construir
+# para computar la selección. Pero NO se entrenan en estado estable: para cada
+# familia se entrena el _reduced si ya existe su selección; si todavía no (primer
+# pase del flujo multi-pass), se cae al full para poder generar esa referencia.
+full_families <- intersect(
+  c("bioclim", "bioclim_veg", "bioclim_topo",
+    "bioclim_veg_topo", "bioclim_soil", "bioclim_veg_soil"),
+  names(env_sets)
+)
+train_env_sets <- vapply(full_families, function(fam) {
+  reduced <- paste0(fam, "_reduced")
+  if (reduced %in% names(env_sets)) reduced else fam
+}, character(1), USE.NAMES = FALSE)
+message("env_sets a entrenar (#45): ", paste(train_env_sets, collapse = ", "))
+
 # 10 000 puntos de background para la estrategia "fixed": valor recomendado para
 # técnicas de regresión en Barbet-Massin et al. (2012). La alternativa "match_presence"
 # (bp_n = n_presencias) es la recomendada para clasificadores tipo RF/BRT en ese mismo paper.
@@ -183,7 +202,7 @@ config_table <- make_config_table(
   bp_methods      = c("random"),
   bp_n_strategies = c("fixed", "match_presence"),
   fixed_bp_n      = fixed_bp_n,
-  env_sets        = names(env_sets),
+  env_sets        = train_env_sets,
   grid_sizes_km   = c(10, 50)
 )
 
