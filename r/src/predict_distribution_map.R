@@ -144,7 +144,7 @@ plot_map_panel <- function(suit_r, bin_r, run_id, threshold, occ_points) {
     geom_point(
       data = occ_points,
       aes(x = decimalLongitude, y = decimalLatitude),
-      colour = "white", fill = "black",
+      colour = "white", fill = "#e31a1c",
       shape = 21, size = 1.2, stroke = 0.2, alpha = 0.9
     ) +
     coord_sf(crs = 4326) +
@@ -163,7 +163,7 @@ plot_map_panel <- function(suit_r, bin_r, run_id, threshold, occ_points) {
     geom_point(
       data = occ_points,
       aes(x = decimalLongitude, y = decimalLatitude),
-      colour = "white", fill = "black",
+      colour = "white", fill = "#e31a1c",
       shape = 21, size = 1.2, stroke = 0.2, alpha = 0.9
     ) +
     coord_sf(crs = 4326) +
