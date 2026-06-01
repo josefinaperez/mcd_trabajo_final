@@ -495,7 +495,7 @@ make_config_table <- function(species_table,
                               bp_methods = c("random"),
                               bp_n_strategies = c("fixed", "match_presence"),
                               fixed_bp_n = 10000L,
-                              env_sets = c("bioclim_30s"),
+                              env_sets = c("bioclim"),
                               grid_sizes_km = c(10, 25, 50)) {
   stopifnot(all(c("species", "occ_file") %in% names(species_table)))
   
