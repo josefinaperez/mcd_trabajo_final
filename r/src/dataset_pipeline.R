@@ -173,6 +173,9 @@ register_reduced_env_set(
   c(bioclim_files, vegetation_files, soil_files)
 )
 
+# 10 000 puntos de background para la estrategia "fixed": valor recomendado para
+# técnicas de regresión en Barbet-Massin et al. (2012). La alternativa "match_presence"
+# (bp_n = n_presencias) es la recomendada para clasificadores tipo RF/BRT en ese mismo paper.
 fixed_bp_n <- 10000L
 
 config_table <- make_config_table(
