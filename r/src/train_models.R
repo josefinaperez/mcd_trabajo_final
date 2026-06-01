@@ -107,16 +107,11 @@ fit_model <- function(algo, X, y, hp = list(), seed = 42) {
   algo <- match.arg(algo, SUPPORTED_ALGOS)
   hp   <- utils::modifyList(ALGO_DEFAULTS[[algo]], hp)
 
-  # Ponderación presencia/background según Barbet-Massin et al. (2012): peso
-  # de presencias = 1 y de background = n_pres / n_bg, de modo que la suma de
-  # pesos de cada clase se iguale (prevalencia 0,5). Con background fijo
-  # (n_bg >> n_pres) el background se sub-pondera; con la estrategia
-  # match_presence (n_bg = n_pres) el peso es 1 y la ponderación es inocua.
-  # Se aplica a ranger y xgboost, que sin ella tratan ambas clases por igual.
-  # maxnet NO se pondera aquí: el paquete ya aplica la ponderación estándar de
-  # Maxent (presencia 1, background 100) de forma interna y no expone weights.
-  case_w <- ifelse(y == 1L, 1, sum(y == 1L) / sum(y == 0L))
-
+  # Balance presencia/background por cantidad de pseudoausencias según algoritmo
+  # (Barbet-Massin et al. 2012), resuelto aguas arriba en el pareo algo→estrategia
+  # de background (train_pipeline.R): maxnet con background fijo (su ponderación
+  # Maxent interna 1:100 cumple el rol de balance) y árboles con match_presence
+  # (n_bg = n_pres). Por eso fit_model no aplica pesos por observación.
   if (algo == "maxnet") {
     args <- list(p = y, data = as.data.frame(X), regmult = hp$regmult)
     if (!is.null(hp$classes)) args$classes <- hp$classes
@@ -128,8 +123,7 @@ fit_model <- function(algo, X, y, hp = list(), seed = 42) {
     df[[".class"]] <- factor(y, levels = c(0L, 1L))
     do.call(ranger::ranger, c(
       list(formula = stats::as.formula(".class ~ ."),
-           data = df, probability = TRUE, seed = seed,
-           case.weights = case_w),
+           data = df, probability = TRUE, seed = seed),
       Filter(Negate(is.null), hp)
     ))
 
@@ -137,8 +131,7 @@ fit_model <- function(algo, X, y, hp = list(), seed = 42) {
     if (!requireNamespace("xgboost", quietly = TRUE)) stop("falta el paquete 'xgboost'")
     do.call(xgboost::xgboost, c(
       list(x = as.matrix(X), y = factor(y, levels = c(0L, 1L)),
-           objective = "binary:logistic", seed = seed, verbosity = 0L,
-           weights = case_w),
+           objective = "binary:logistic", seed = seed, verbosity = 0L),
       Filter(Negate(is.null), hp)
     ))
   }

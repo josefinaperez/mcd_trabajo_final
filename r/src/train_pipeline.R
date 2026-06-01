@@ -39,6 +39,17 @@ BLOCK_SIZE_CAP_KM <- 300L
 CV_SCHEMES     <- c("spatial_block")
 ALGOS          <- c("maxnet", "ranger", "xgboost")
 
+# #46: cantidad de pseudoausencias según algoritmo (Barbet-Massin et al. 2012).
+# maxnet (máxima entropía / regresión) entrena con background fijo (10 000); los
+# clasificadores de árboles entrenan con match_presence (n_bg = n_pres). Cada
+# algoritmo entrena ÚNICAMENTE sobre los datasets cuya bp_n_strategy coincide con
+# la suya; los pares (run × algo) que no matchean se omiten del grid.
+ALGO_BP_STRATEGY <- c(
+  maxnet  = "fixed",
+  ranger  = "match_presence",
+  xgboost = "match_presence"
+)
+
 # Idempotencia: por defecto se saltea cualquier (run × cv × algo) ya entrenado
 # en disco. Forzar reentrenamiento completo con SDM_FORCE=1 en el entorno.
 # Los helpers model_artifacts_exist() / read_basic_metrics() viven en
@@ -166,7 +177,18 @@ train_grid <- tidyr::expand_grid(
   cv_scheme = CV_SCHEMES,
   algo      = ALGOS,
   i         = seq_len(nrow(datasets_manifest))
-)
+) |>
+  # #46: cada algoritmo entrena solo sobre datasets de su estrategia de background.
+  mutate(bp_n_strategy = datasets_manifest$bp_n_strategy[i]) |>
+  filter(bp_n_strategy == ALGO_BP_STRATEGY[algo]) |>
+  select(-bp_n_strategy)
+
+message(sprintf("Entrenando %d pares (run × algo) tras el pareo algo→background (#46):",
+                nrow(train_grid)))
+train_grid |>
+  count(algo, name = "n_runs") |>
+  purrr::pwalk(function(algo, n_runs)
+    message(sprintf("  %-8s %s -> %d runs", algo, ALGO_BP_STRATEGY[[algo]], n_runs)))
 
 basic_metrics_per_run <- purrr::pmap_dfr(
   train_grid,
