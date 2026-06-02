@@ -44,16 +44,37 @@ predict_model.maxnet      <- function(x, newdata, type, ...) .lime_predict_df(x,
 predict_model.ranger      <- function(x, newdata, type, ...) .lime_predict_df(x, newdata)
 predict_model.xgb.Booster <- function(x, newdata, type, ...) .lime_predict_df(x, newdata)
 
-# Registrar globalmente para que lime los encuentre vía S3
-# dispatch incluso si no se exporta el namespace. Sobreescribe
-# cualquier método propio de lime para estas clases, garantizando
-# la normalización a score de presencia en [0, 1].
+# Registrar globalmente para que lime los encuentre vía S3 dispatch.
+# Alcanza para maxnet, que lime NO soporta de fábrica.
 .S3method("model_type",    "maxnet",      model_type.maxnet)
 .S3method("model_type",    "ranger",      model_type.ranger)
 .S3method("model_type",    "xgb.Booster", model_type.xgb.Booster)
 .S3method("predict_model", "maxnet",      predict_model.maxnet)
 .S3method("predict_model", "ranger",      predict_model.ranger)
 .S3method("predict_model", "xgb.Booster", predict_model.xgb.Booster)
+
+# #50: para ranger y xgb.Booster, lime YA trae sus propios predict_model /
+# model_type en su namespace, y esos ganan el dispatch interno por encima del
+# .S3method de arriba. El built-in devuelve columnas con los nombres de clase
+# ("0"/"1") en vez de "presence"/"background", de modo que explain(labels=
+# "presence") encuentra una respuesta NULL -> glm.fit -> "NAs in V(mu)". Para
+# forzar el predict custom uniforme (mismo score [0,1] y label "presence" en los
+# 3 algoritmos) reemplazamos esos bindings DENTRO del namespace de lime.
+# maxnet no tiene built-in, así que no requiere override.
+.override_lime_builtins <- function() {
+  if (!requireNamespace("lime", quietly = TRUE)) return(invisible())
+  ns <- asNamespace("lime")
+  for (cl in c("ranger", "xgb.Booster")) {
+    for (gen in c("predict_model", "model_type")) {
+      method <- paste0(gen, ".", cl)
+      if (exists(method, envir = ns, inherits = FALSE)) {
+        assignInNamespace(method, get(method), "lime")
+      }
+    }
+  }
+  invisible()
+}
+.override_lime_builtins()
 
 # ------------------------------------------------------------
 # (2) select_lime_points: arma 8 puntos por run.
