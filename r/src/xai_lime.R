@@ -144,9 +144,17 @@ select_lime_points <- function(predictions_test, ds_model_ready,
                               class_observed, dplyr::all_of(pred_cols))
   )
 
-  if (anyNA(out |> dplyr::select(dplyr::all_of(pred_cols)))) {
-    warning("select_lime_points: algún punto crítico cae fuera del raster (NA en features). ",
-            "Revisar coordenadas.")
+  # Algunos puntos críticos pueden caer en celdas NA del stack (p. ej. los
+  # huecos de agua de human_modification, #47) -> features NA que rompen LIME
+  # ("NA/NaN/Inf in 'y'"). Se descartan esos puntos (no las presencias, que
+  # vienen del join del dataset). Se conserva LIME con los puntos válidos.
+  n_before <- nrow(out)
+  out <- out |>
+    dplyr::filter(!dplyr::if_any(dplyr::all_of(pred_cols), is.na))
+  n_dropped <- n_before - nrow(out)
+  if (n_dropped > 0) {
+    warning("select_lime_points: ", n_dropped, " punto(s) crítico(s) en celdas NA ",
+            "descartado(s) (features incompletas).")
   }
 
   out
