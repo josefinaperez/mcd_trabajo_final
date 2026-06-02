@@ -30,16 +30,20 @@ source("r/src/env_selection_pipeline.R")
 #    under spatial-block CV; persist per-run artifacts + summary.
 source("r/src/train_pipeline.R")
 
-# 4) Prediction maps and XAI (SHAP/PDP/LIME). NOTE: these two must be run with
-#    `Rscript r/src/<file>.R` directly — they branch on sys.nframe() and skip the
-#    main block when source()'d interactively.
+# 4) Prediction maps, XAI (SHAP/PDP/LIME) and residual spatial-autocorrelation
+#    diagnostics. NOTE: these must be run with `Rscript r/src/<file>.R` directly
+#    — they branch on sys.nframe() and skip the main block when source()'d.
+#    residual_autocorr_pipeline.R reads predict's winner_summary.csv, so run it
+#    after predict_pipeline.R.
 #    Rscript r/src/predict_pipeline.R
 #    Rscript r/src/xai_pipeline.R
+#    Rscript r/src/residual_autocorr_pipeline.R
 
 # 5) (Optional) Render the display-only notebooks from the persisted outputs
 rmarkdown::render("r/notebooks/stage1_maxent.Rmd")        # metrics + curves
 rmarkdown::render("r/notebooks/stage3_distribution_map.Rmd")
 rmarkdown::render("r/notebooks/stage4_xai.Rmd")
+rmarkdown::render("r/notebooks/stage5_residual_diagnostics.Rmd")
 ```
 
 **Convention**: scripts under `r/src/` do all the computation and write artifacts to disk. Notebooks under `r/notebooks/` are **display-only** — they `read_csv` / `include_graphics` from `data/outputs/...` and never train, fit, or transform. If a notebook needs new data, add it to the corresponding `*_pipeline.R` first.
@@ -82,7 +86,9 @@ Two-layer split, **algorithm-agnostic**:
 
 Prediction maps and explainability are separate stages: `predict_pipeline.R` (+ `predict_distribution_map.R`) and `xai_pipeline.R` (+ `xai_shap.R` / `xai_pdp.R` / `xai_lime.R`, dispatched via `xai_predict.R`). Both **must be run with `Rscript` directly** (they guard their main block on `sys.nframe()`).
 
-The display-only notebooks (`stage1_maxent.Rmd` metrics/curves, `stage3_distribution_map.Rmd`, `stage4_xai.Rmd`) `read_csv` / `include_graphics` from `data/outputs/...`. **Notebook paths are relative to `r/notebooks/` (e.g. `../../data/...`)** — different from the source scripts, which assume the working directory is the repo root.
+**Residual spatial-autocorrelation diagnostics** (issue #34): `residual_autocorr_pipeline.R` (+ pure functions in `residual_autocorrelation.R`, tested by `r/checks/check_residual_autocorrelation.R`). For each winner in `predict_pipeline`'s `winner_summary.csv`, it reads the pooled spatial-block `predictions_test.csv`, computes raw residuals (`class − score`) over all evaluation points, and runs **Moran's I** (k=8 nearest-neighbour weights, AEA projection) with a Monte-Carlo permutation p-value (`spdep::moran.mc`) plus a distance-band correlogram and a residual map. Writes `morans_i.csv`, `correlogram.csv`, `residual_map.png`, `correlogram.png` per winner and a top-level `summary.csv` under `data/outputs/sdm_residuals/`. Same `Rscript`-only / `sys.nframe()` / skip-if-exists+`SDM_FORCE` conventions; **depends on `predict_pipeline.R` having produced `winner_summary.csv`**. New CRAN dependency: `spdep`.
+
+The display-only notebooks (`stage1_maxent.Rmd` metrics/curves, `stage3_distribution_map.Rmd`, `stage4_xai.Rmd`, `stage5_residual_diagnostics.Rmd`) `read_csv` / `include_graphics` from `data/outputs/...`. **Notebook paths are relative to `r/notebooks/` (e.g. `../../data/...`)** — different from the source scripts, which assume the working directory is the repo root.
 
 ### Working-directory contract
 
