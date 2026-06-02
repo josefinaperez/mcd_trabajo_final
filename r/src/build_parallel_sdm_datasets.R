@@ -108,6 +108,51 @@ sample_random_background <- function(mask_raster,
   pts_df
 }
 
+# #48: background target-group (Phillips et al. 2009). En vez de muestrear el
+# fondo de forma uniforme, lo muestrea con probabilidad ∝ una superficie de
+# sesgo (weight_raster), de modo que el background comparta el sesgo espacial
+# de muestreo de las presencias y éste se cancele en el contraste
+# presencia/background. Muestrea centros de celda SIN reemplazo con prob ∝ peso,
+# sobre las celdas válidas de la máscara (no-NA). El weight_raster se alinea a la
+# grilla de la máscara si hace falta.
+sample_weighted_background <- function(mask_raster,
+                                       weight_raster,
+                                       n = 10000,
+                                       seed = 42,
+                                       lon_col = "decimalLongitude",
+                                       lat_col = "decimalLatitude") {
+  set.seed(seed)
+
+  if (!terra::compareGeom(weight_raster, mask_raster, stopOnError = FALSE)) {
+    weight_raster <- terra::resample(weight_raster, mask_raster, method = "bilinear")
+  }
+
+  mask1 <- mask_raster[[1]]
+  valid <- which(!is.na(terra::values(mask1, mat = FALSE)))
+  if (length(valid) == 0) stop("sample_weighted_background: máscara sin celdas válidas.")
+
+  w  <- terra::values(weight_raster, mat = FALSE)[valid]
+  ok <- is.finite(w) & w > 0
+  cells <- valid[ok]
+  w     <- w[ok]
+  if (length(cells) == 0) {
+    stop("sample_weighted_background: ninguna celda válida con peso > 0.")
+  }
+  if (length(cells) < n) {
+    warning(sprintf("sample_weighted_background: solo %d celdas con peso > 0 (< n = %d).",
+                    length(cells), n))
+  }
+
+  size <- min(n, length(cells))
+  idx  <- sample(cells, size = size, replace = FALSE, prob = w / sum(w))
+  xy   <- terra::xyFromCell(mask1, idx)
+
+  pts_df <- as.data.frame(xy)
+  names(pts_df) <- c(lon_col, lat_col)
+  rownames(pts_df) <- NULL
+  pts_df
+}
+
 extract_env_values <- function(points_df,
                                env_rast,
                                lon_col = "decimalLongitude",
@@ -185,6 +230,10 @@ apply_spatial_bias_method <- function(occ_df,
 # little helper for NULL default
 `%||%` <- function(x, y) if (is.null(x)) y else x
 
+# #48: superficie de accesibilidad por defecto para el background target-group
+# (inverso de travel_time). Es la capa antrópica armonizada de #47.
+TRAVEL_TIME_PATH <- "data/features/env_2.5m_ar/anthropic/travel_time.tif"
+
 # ============================================================
 # 3) BACKGROUND-POINT METHODS
 # ============================================================
@@ -230,6 +279,46 @@ generate_background_points <- function(bp_method = "random",
     ))
   }
   
+  # #48: background target-group ponderado por accesibilidad (inverso de
+  # travel_time). El peso decae exponencialmente con el tiempo de viaje:
+  # w = exp(-tt / tau). tau (escala de decaimiento) se calibra con la MEDIANA
+  # del travel_time en las presencias, de modo que el background imite la
+  # accesibilidad observada del muestreo. Así el sesgo de accesibilidad queda
+  # igual en presencia y fondo, y se cancela en el contraste.
+  if (bp_method == "bias_weighted") {
+    n     <- bp_params$n %||% 10000
+    seed  <- bp_params$seed %||% 42
+    wpath <- bp_params$weight_raster_path %||% TRAVEL_TIME_PATH
+    if (!file.exists(wpath)) {
+      stop("bias_weighted: falta la capa de accesibilidad (", wpath,
+           "). Preparar las capas antrópicas (#47) primero.")
+    }
+    tt <- terra::rast(wpath)
+
+    tau <- bp_params$tau
+    if (is.null(tau)) {
+      if (is.null(occ_df)) stop("bias_weighted: se requiere occ_df para calibrar tau.")
+      occ_v <- terra::vect(occ_df[, c(lon_col, lat_col)],
+                           geom = c(lon_col, lat_col), crs = "EPSG:4326")
+      pv  <- terra::extract(tt, occ_v)[[2]]
+      tau <- stats::median(pv, na.rm = TRUE)
+      if (!is.finite(tau) || tau <= 0) {
+        tau <- stats::median(terra::values(tt, mat = FALSE), na.rm = TRUE)
+      }
+    }
+    message(sprintf("    bias_weighted: tau (mediana tt presencias) = %.1f", tau))
+    weight_r <- exp(-tt / tau)
+
+    return(sample_weighted_background(
+      mask_raster   = mask_raster,
+      weight_raster = weight_r,
+      n             = n,
+      seed          = seed,
+      lon_col       = lon_col,
+      lat_col       = lat_col
+    ))
+  }
+
   # placeholders for future methods
   if (bp_method == "spatially_constrained") {
     stop("spatially_constrained BP not implemented yet.")
@@ -440,9 +529,10 @@ make_config_table <- function(species_table,
                               bp_n_strategies = c("fixed", "match_presence"),
                               fixed_bp_n = 10000L,
                               env_sets = c("bioclim"),
-                              grid_sizes_km = c(10, 25, 50)) {
+                              grid_sizes_km = c(10, 25, 50),
+                              bias_weighted_env_sets = character(0)) {
   stopifnot(all(c("species", "occ_file") %in% names(species_table)))
-  
+
   none_rows <- species_table |>
     tidyr::crossing(
       bias_method   = "none",
@@ -452,7 +542,7 @@ make_config_table <- function(species_table,
       fixed_bp_n    = fixed_bp_n,
       env_set       = env_sets
     )
-  
+
   grid_rows <- species_table |>
     tidyr::crossing(
       bias_method   = "grid_thin",
@@ -462,8 +552,25 @@ make_config_table <- function(species_table,
       fixed_bp_n    = fixed_bp_n,
       env_set       = env_sets
     )
-  
-  configs <- bind_rows(none_rows, grid_rows) |>
+
+  # #48: background target-group (bias_weighted) SOLO con bias_method=none y
+  # solo sobre los env_sets ecológicos indicados (sin antrópicos). Se compara
+  # contra el background aleatorio de none_rows sobre los mismos env_sets.
+  bw_rows <- if (length(bias_weighted_env_sets) > 0) {
+    species_table |>
+      tidyr::crossing(
+        bias_method   = "none",
+        bias_param    = NA_real_,
+        bp_method     = "bias_weighted",
+        bp_n_strategy = bp_n_strategies,
+        fixed_bp_n    = fixed_bp_n,
+        env_set       = bias_weighted_env_sets
+      )
+  } else {
+    NULL
+  }
+
+  configs <- bind_rows(none_rows, grid_rows, bw_rows) |>
     mutate(
       bp_n_strategy = as.character(bp_n_strategy),
       bp_n_label = ifelse(

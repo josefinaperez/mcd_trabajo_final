@@ -231,13 +231,22 @@ fixed_bp_n <- 10000L
 #   - Medio = geométrico entre piso y techo. -> 15 km.
 # c(5,15,30) cubre de-dup -> moderado -> límite del clustering empírico; los
 # tres >= celda y ninguno sobre-thinnea. N por tier: 510 / 340 / 249.
+# #48: background target-group (bias_weighted) sobre los env_sets ECOLÓGICOS
+# (sin los antrópicos, que son diagnóstico). Compara contra el background
+# aleatorio en bias_method=none sobre los mismos env_sets. Vacío si todavía no
+# está la capa de accesibilidad (travel_time), para no generar configs que
+# fallarían.
+eco_env_sets <- train_env_sets[!grepl("anthro", train_env_sets)]
+bias_weighted_env_sets <- if (length(anthro_files) > 0) eco_env_sets else character(0)
+
 config_table <- make_config_table(
-  species_table   = species_table,
-  bp_methods      = c("random"),
-  bp_n_strategies = c("fixed", "match_presence"),
-  fixed_bp_n      = fixed_bp_n,
-  env_sets        = train_env_sets,
-  grid_sizes_km   = c(5, 15, 30)
+  species_table          = species_table,
+  bp_methods             = c("random"),
+  bp_n_strategies        = c("fixed", "match_presence"),
+  fixed_bp_n             = fixed_bp_n,
+  env_sets               = train_env_sets,
+  grid_sizes_km          = c(5, 15, 30),
+  bias_weighted_env_sets = bias_weighted_env_sets
 )
 
 manifest <- build_parallel_sdm_datasets(
