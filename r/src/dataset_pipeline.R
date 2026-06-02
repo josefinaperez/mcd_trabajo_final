@@ -98,6 +98,7 @@ bioclim_files    <- list.files("data/features/env_2.5m_ar/bioclim", pattern = "t
 vegetation_files <- list.files("data/features/env_2.5m_ar/vegetation", pattern = "tif$", full.names = TRUE)
 topo_files       <- list.files("data/features/env_2.5m_ar/topography", pattern = "tif$", full.names = TRUE)
 soil_files       <- list.files("data/features/env_2.5m_ar/soil", pattern = "tif$", full.names = TRUE)
+anthro_files     <- list.files("data/features/env_2.5m_ar/anthropic", pattern = "tif$", full.names = TRUE)
 
 env_sets <- list(
   bioclim     = list(files = bioclim_files),
@@ -112,6 +113,13 @@ if (length(topo_files) > 0) {
 if (length(soil_files) > 0) {
   env_sets$bioclim_soil     <- list(files = c(bioclim_files, soil_files))
   env_sets$bioclim_veg_soil <- list(files = c(bioclim_files, vegetation_files, soil_files))
+}
+# #47: antropización (solo si las capas ya fueron preparadas). Diagnóstico de
+# sesgo: si estas variables dominan en XAI, la muestra está guiada por
+# accesibilidad humana, no por ecología.
+if (length(anthro_files) > 0) {
+  env_sets$bioclim_anthro     <- list(files = c(bioclim_files, anthro_files))
+  env_sets$bioclim_veg_anthro <- list(files = c(bioclim_files, vegetation_files, anthro_files))
 }
 
 # Identificador de variable, agnóstico a la resolución y robusto a nombres de
@@ -172,6 +180,18 @@ register_reduced_env_set(
   "data/outputs/env_selection/selected_vars_veg_soil.csv",
   c(bioclim_files, vegetation_files, soil_files)
 )
+# #47 bioclim_anthro_reduced: subset no colineal de bioclim + antropización.
+register_reduced_env_set(
+  "bioclim_anthro_reduced",
+  "data/outputs/env_selection/selected_vars_anthro.csv",
+  c(bioclim_files, anthro_files)
+)
+# #47 bioclim_veg_anthro_reduced: subset no colineal de bioclim + vegetación + antropización.
+register_reduced_env_set(
+  "bioclim_veg_anthro_reduced",
+  "data/outputs/env_selection/selected_vars_veg_anthro.csv",
+  c(bioclim_files, vegetation_files, anthro_files)
+)
 
 # #45: estandarizar en los env_sets _reduced. La reducción de colinealidad es
 # el paso estándar en SDM (Dormann et al. 2013) y se justifica para que la
@@ -183,7 +203,8 @@ register_reduced_env_set(
 # pase del flujo multi-pass), se cae al full para poder generar esa referencia.
 full_families <- intersect(
   c("bioclim", "bioclim_veg", "bioclim_topo",
-    "bioclim_veg_topo", "bioclim_soil", "bioclim_veg_soil"),
+    "bioclim_veg_topo", "bioclim_soil", "bioclim_veg_soil",
+    "bioclim_anthro", "bioclim_veg_anthro"),
   names(env_sets)
 )
 train_env_sets <- vapply(full_families, function(fam) {

@@ -95,3 +95,19 @@ run_selection(
   predictor_cols_fn = predictors_minus_meta,
   suffix            = "_veg_soil"
 )
+
+# 7) #47 Bioclim + antropización -> selected_vars_anthro.csv
+#    (alimenta bioclim_anthro_reduced).
+run_selection(
+  ref_run_id        = "polyporaceae__bias-none__bp-random__bpn-fixed_10000__env-bioclim_anthro",
+  predictor_cols_fn = predictors_minus_meta,
+  suffix            = "_anthro"
+)
+
+# 8) #47 Bioclim + vegetación + antropización -> selected_vars_veg_anthro.csv
+#    (alimenta bioclim_veg_anthro_reduced).
+run_selection(
+  ref_run_id        = "polyporaceae__bias-none__bp-random__bpn-fixed_10000__env-bioclim_veg_anthro",
+  predictor_cols_fn = predictors_minus_meta,
+  suffix            = "_veg_anthro"
+)

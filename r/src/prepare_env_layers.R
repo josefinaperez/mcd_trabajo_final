@@ -28,6 +28,9 @@ OUT_TOPO     <- "data/features/env_2.5m_ar/topography"
 SOIL_RAW_DIR <- "data/features/soil_raw"   # subdirs: phh2o, soc, sand, silt, clay, cec, bdod
 SOIL_VARS    <- c("phh2o", "soc", "sand", "silt", "clay", "cec", "bdod")
 OUT_SOIL     <- "data/features/env_2.5m_ar/soil"
+ANTHRO_RAW_DIR <- "data/features/anthropic_raw"   # subdirs: travel_time, human_modification
+ANTHRO_VARS    <- c("travel_time", "human_modification")  # accesibilidad (Weiss 2018) + presión humana gHM (Kennedy 2019)
+OUT_ANTHRO     <- "data/features/env_2.5m_ar/anthropic"
 
 # ---- #24: grilla de referencia (WorldClim 2.5m recortado a Argentina) ----
 # Devuelve el template (capa de referencia para alinear todo lo demás).
@@ -126,6 +129,17 @@ build_soil_layers <- function(template) {
   message("capas de suelo: ", paste(SOIL_VARS, collapse = ", "), " escritas")
 }
 
+# ---- #47: capas antrópicas (accesibilidad + presión humana) ----
+# Mismo procesamiento agregado que topografía/suelo. Insumos crudos
+# (~1 km, recortados a Argentina, exportados de GEE): travel-time a
+# ciudades (Weiss et al. 2018) y Global Human Modification gHM
+# (Kennedy et al. 2019). NA = sin dato (no se rellena).
+build_anthropic_layers <- function(template) {
+  ar <- terra::vect(SHP_PATH)
+  build_aggregated_layers(ANTHRO_RAW_DIR, ANTHRO_VARS, OUT_ANTHRO, template, ar)
+  message("capas antrópicas: ", paste(ANTHRO_VARS, collapse = ", "), " escritas")
+}
+
 # ---- main ----
 template <- build_reference_grid()
 
@@ -167,5 +181,18 @@ if (soil_ready) {
   faltan <- SOIL_VARS[!vapply(SOIL_VARS, function(v)
     length(list.files(file.path(SOIL_RAW_DIR, v), pattern = "tif$")) > 0, logical(1))]
   message("prepare_env_layers: suelo OMITIDO (faltan insumos: ",
+          paste(faltan, collapse = ", "), "). Re-correr cuando estén.")
+}
+
+anthro_ready <- all(vapply(ANTHRO_VARS, function(v)
+  length(list.files(file.path(ANTHRO_RAW_DIR, v), pattern = "tif$")) > 0, logical(1)))
+
+if (anthro_ready) {
+  build_anthropic_layers(template)
+  message("prepare_env_layers: antropización OK")
+} else {
+  faltan <- ANTHRO_VARS[!vapply(ANTHRO_VARS, function(v)
+    length(list.files(file.path(ANTHRO_RAW_DIR, v), pattern = "tif$")) > 0, logical(1))]
+  message("prepare_env_layers: antropización OMITIDA (faltan insumos: ",
           paste(faltan, collapse = ", "), "). Re-correr cuando estén.")
 }
