@@ -82,41 +82,40 @@ select_lime_points <- function(predictions_test, ds_model_ready,
                                env_stack, critical_points) {
   pred_cols <- setdiff(names(ds_model_ready), c("class", "decimalLongitude", "decimalLatitude"))
 
-  pres_test <- predictions_test |>
+  # Join de features ANTES de samplear: una fracción de las coords de
+  # predictions_test no casa exacto contra el dataset por precisión de floats
+  # al escribir los CSV. Si se sampleara primero, un punto sin match tiraría el
+  # join a <6 y abortaría. Se arma el pool de presencias YA matcheadas (orden
+  # por score desc) y se samplean los 3 alto / 3 bajo de ahí.
+  pres_feat <- ds_model_ready |>
+    dplyr::rename(lon = decimalLongitude, lat = decimalLatitude) |>
+    dplyr::select(lon, lat, dplyr::all_of(pred_cols))
+
+  pres_pool <- predictions_test |>
     dplyr::filter(class == 1) |>
+    dplyr::rename(lon = decimalLongitude, lat = decimalLatitude,
+                  class_observed = class) |>
+    dplyr::inner_join(pres_feat, by = c("lon", "lat")) |>
+    dplyr::distinct(lon, lat, .keep_all = TRUE) |>
     dplyr::arrange(dplyr::desc(score))
 
-  n_pres <- nrow(pres_test)
+  n_pres <- nrow(pres_pool)
   if (n_pres < 6) {
-    stop("select_lime_points: faltan presencias en test (", n_pres, ")")
+    stop("select_lime_points: faltan presencias con features (", n_pres, ")")
   }
 
   set.seed(42)
   high_idx <- sample(seq_len(max(1, ceiling(n_pres * 0.2))), size = 3)
   low_idx  <- sample(seq(n_pres - ceiling(n_pres * 0.2) + 1, n_pres), size = 3)
 
-  high_pres <- pres_test[high_idx, ] |>
+  high_pres <- pres_pool[high_idx, ] |>
     dplyr::mutate(point_id = paste0("pres_high_", dplyr::row_number()),
                   origin   = "presencia_score_alto")
-  low_pres <- pres_test[low_idx, ] |>
+  low_pres <- pres_pool[low_idx, ] |>
     dplyr::mutate(point_id = paste0("pres_low_", dplyr::row_number()),
                   origin   = "presencia_score_bajo")
 
-  pres_sel <- dplyr::bind_rows(high_pres, low_pres) |>
-    dplyr::rename(lon = decimalLongitude, lat = decimalLatitude,
-                  class_observed = class)
-
-  pres_feat <- ds_model_ready |>
-    dplyr::rename(lon = decimalLongitude, lat = decimalLatitude) |>
-    dplyr::select(lon, lat, dplyr::all_of(pred_cols))
-
-  pres_sel <- pres_sel |>
-    dplyr::inner_join(pres_feat, by = c("lon", "lat"))
-
-  if (nrow(pres_sel) != 6) {
-    stop("select_lime_points: join de features falló (esperaba 6, hay ",
-         nrow(pres_sel), ")")
-  }
+  pres_sel <- dplyr::bind_rows(high_pres, low_pres)
 
   # Extraer features de los puntos críticos del raster
   crit_xy   <- as.matrix(critical_points[, c("lon", "lat")])

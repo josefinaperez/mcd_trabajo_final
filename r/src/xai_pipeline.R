@@ -141,19 +141,33 @@ explain_one_run <- function(run_id, cv_scheme, algorithm, role, env_stack,
   }
   crit <- LIME_CRITICAL_POINTS[[species]]
 
+  # LIME es el XAI secundario (SHAP es el primario). Su integración con lime
+  # falla en algunos modelos (p. ej. ranger con predict_model custom -> "NAs in
+  # V(mu)" de glmnet). Se aísla en tryCatch para que una falla de LIME no tire
+  # abajo el run: SHAP + PDP igual quedan persistidos.
   message("  LIME: seleccionando 8 puntos + explicando")
-  pts <- select_lime_points(preds, ds, env_stack, crit)
-  lime_df <- compute_lime(model, pts, X_train,
-                          n_features = LIME_N_FEATURES,
-                          n_permutations = LIME_N_PERMS)
-  p_lime <- plot_lime_panel(lime_df, pts, run_id)
+  lime_ok <- tryCatch({
+    pts <- select_lime_points(preds, ds, env_stack, crit)
+    lime_df <- compute_lime(model, pts, X_train,
+                            n_features = LIME_N_FEATURES,
+                            n_permutations = LIME_N_PERMS)
+    p_lime <- plot_lime_panel(lime_df, pts, run_id)
 
-  readr::write_csv(pts |> dplyr::select(point_id, lon, lat, score,
-                                        origin, class_observed),
-                   file.path(run_dir, "lime_points.csv"))
-  readr::write_csv(lime_df, file.path(run_dir, "lime_weights.csv"))
-  ggsave(file.path(run_dir, "lime_panel.png"),
-         p_lime, width = 14, height = 7, dpi = 150)
+    readr::write_csv(pts |> dplyr::select(point_id, lon, lat, score,
+                                          origin, class_observed),
+                     file.path(run_dir, "lime_points.csv"))
+    readr::write_csv(lime_df, file.path(run_dir, "lime_weights.csv"))
+    ggsave(file.path(run_dir, "lime_panel.png"),
+           p_lime, width = 14, height = 7, dpi = 150)
+    nrow(pts)
+  }, error = function(e) {
+    warning("explain_one_run: LIME falló para ", run_id, " / ", algorithm,
+            " (", conditionMessage(e), "). Se persisten SHAP + PDP igual.")
+    NA_integer_
+  })
+
+  lime_path <- function(f) if (is.na(lime_ok)) NA_character_ else
+    normalizePath(file.path(run_dir, f), mustWork = TRUE)
 
   # ---- Manifest row ----
   tibble::tibble(
@@ -166,11 +180,11 @@ explain_one_run <- function(run_id, cv_scheme, algorithm, role, env_stack,
     importance_path   = normalizePath(file.path(run_dir, "importance_ranking.csv"),  mustWork = TRUE),
     pdp_long_path     = normalizePath(file.path(run_dir, "pdp_long.csv"),            mustWork = TRUE),
     pdp_png_path      = normalizePath(file.path(run_dir, "pdp_grid.png"),            mustWork = TRUE),
-    lime_points_path  = normalizePath(file.path(run_dir, "lime_points.csv"),         mustWork = TRUE),
-    lime_weights_path = normalizePath(file.path(run_dir, "lime_weights.csv"),        mustWork = TRUE),
-    lime_panel_path   = normalizePath(file.path(run_dir, "lime_panel.png"),          mustWork = TRUE),
+    lime_points_path  = lime_path("lime_points.csv"),
+    lime_weights_path = lime_path("lime_weights.csv"),
+    lime_panel_path   = lime_path("lime_panel.png"),
     n_explained_shap  = nrow(X_explain),
-    n_explained_lime  = nrow(pts)
+    n_explained_lime  = lime_ok
   )
 }
 
