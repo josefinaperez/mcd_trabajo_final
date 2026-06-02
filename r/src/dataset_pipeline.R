@@ -197,13 +197,26 @@ message("env_sets a entrenar (#45): ", paste(train_env_sets, collapse = ", "))
 # (bp_n = n_presencias) es la recomendada para clasificadores tipo RF/BRT en ese mismo paper.
 fixed_bp_n <- 10000L
 
+# Escala de thinning vs. resolución de predictores (issue #10). El barrido se
+# ancla en los datos, no en valores redondos arbitrarios:
+#   - Piso = celda del predictor (2.5 arc-min ~4.6 km): el thinning no debe ser
+#     más fino que la celda (dos presencias co-celda son duplicados en espacio
+#     de features). El 81,5% de las presencias tiene su vecino más cercano a
+#     <4.6 km, así que de-duplicar a la celda es el corte más impactante.
+#     -> 5 km (~1 celda).
+#   - Techo = p95 de la distancia al vecino más cercano (~30 km): por encima de
+#     esa escala el thinning ya no corrige sesgo, remueve registros
+#     independientes (sobre-thinning). -> 30 km.
+#   - Medio = geométrico entre piso y techo. -> 15 km.
+# c(5,15,30) cubre de-dup -> moderado -> límite del clustering empírico; los
+# tres >= celda y ninguno sobre-thinnea. N por tier: 510 / 340 / 249.
 config_table <- make_config_table(
   species_table   = species_table,
   bp_methods      = c("random"),
   bp_n_strategies = c("fixed", "match_presence"),
   fixed_bp_n      = fixed_bp_n,
   env_sets        = train_env_sets,
-  grid_sizes_km   = c(10, 50)
+  grid_sizes_km   = c(5, 15, 30)
 )
 
 manifest <- build_parallel_sdm_datasets(
