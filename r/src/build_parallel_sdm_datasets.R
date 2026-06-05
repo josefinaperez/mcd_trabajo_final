@@ -573,7 +573,8 @@ make_config_table <- function(species_table,
                               fixed_bp_n = 10000L,
                               env_sets = c("bioclim"),
                               grid_sizes_km = c(10, 25, 50),
-                              bias_weighted_env_sets = character(0)) {
+                              bias_weighted_env_sets = character(0),
+                              spatially_constrained_env_sets = character(0)) {
   stopifnot(all(c("species", "occ_file") %in% names(species_table)))
 
   none_rows <- species_table |>
@@ -613,7 +614,25 @@ make_config_table <- function(species_table,
     NULL
   }
 
-  configs <- bind_rows(none_rows, grid_rows, bw_rows) |>
+  # #52: background spatially_constrained SOLO con bias_method=none, sobre los
+  # env_sets ecológicos indicados. Se compara contra el background aleatorio
+  # (none_rows) sobre los mismos env_sets. buffer_km queda como constante en el
+  # sampler (no entra al run_id porque usamos un único radio).
+  sc_rows <- if (length(spatially_constrained_env_sets) > 0) {
+    species_table |>
+      tidyr::crossing(
+        bias_method   = "none",
+        bias_param    = NA_real_,
+        bp_method     = "spatially_constrained",
+        bp_n_strategy = bp_n_strategies,
+        fixed_bp_n    = fixed_bp_n,
+        env_set       = spatially_constrained_env_sets
+      )
+  } else {
+    NULL
+  }
+
+  configs <- bind_rows(none_rows, grid_rows, bw_rows, sc_rows) |>
     mutate(
       bp_n_strategy = as.character(bp_n_strategy),
       bp_n_label = ifelse(
