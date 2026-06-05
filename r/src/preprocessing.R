@@ -19,7 +19,9 @@ preprocess_dataset <- function(df_path,
     filter(!is.na(decimalLongitude)) %>%
     filter(!is.na(decimalLatitude))
   
-  # Remover por fecha
+  # Remover por fecha. NOTA: `year >= min_year` descarta también los registros
+  # con year = NA (NA -> FALSE); es intencional — sin año no se puede verificar
+  # la coherencia temporal con la ventana de los predictores (issue 22).
   df_clean <- df_clean %>%
     filter(year >= min_year)
   
@@ -38,11 +40,14 @@ preprocess_dataset <- function(df_path,
   df_clean <- df_clean %>%
     filter(coordinateUncertaintyInMeters / 1000 <= max_uncertainty_km | is.na(coordinateUncertaintyInMeters))
   
-  # Remover registros que no correspondan a una observación humana
-  df_clean <- filter(df_clean, basisOfRecord == "HUMAN_OBSERVATION" | 
-                       basisOfRecord == "OBSERVATION" |
-                       basisOfRecord == "PRESERVED_SPECIMEN" |
-                       basisOfRecord == "LIVING_SPECIMEN")
+  # Whitelist de basisOfRecord. MATERIAL_SAMPLE incluido: en hongos son
+  # especímenes/secuencias con respaldo físico (issue 22). Se quitó "OBSERVATION"
+  # (enum legado de GBIF, sin coincidencias). La georref institucional/centroide
+  # de estos registros la limpian los tests cc_inst/cc_cen/cc_cap más abajo.
+  df_clean <- filter(df_clean, basisOfRecord %in% c("HUMAN_OBSERVATION",
+                                                    "PRESERVED_SPECIMEN",
+                                                    "MATERIAL_SAMPLE",
+                                                    "LIVING_SPECIMEN"))
   
   
   # Remover registros según los tests.
@@ -58,7 +63,13 @@ preprocess_dataset <- function(df_path,
     duplicates = function(d) cc_dupl(d, lon = "decimalLongitude", lat = "decimalLatitude",
                                      species = "species", value = "flagged"),
     outliers   = function(d) cc_outl(d, lon = "decimalLongitude", lat = "decimalLatitude",
-                                     species = "species", value = "flagged")
+                                     species = "species", value = "flagged"),
+    institutions = function(d) cc_inst(d, lon = "decimalLongitude", lat = "decimalLatitude",
+                                       species = "species", value = "flagged"),
+    centroids    = function(d) cc_cen(d,  lon = "decimalLongitude", lat = "decimalLatitude",
+                                      species = "species", value = "flagged"),
+    capitals     = function(d) cc_cap(d,  lon = "decimalLongitude", lat = "decimalLatitude",
+                                      species = "species", value = "flagged")
   )
 
   flag_mat <- vapply(

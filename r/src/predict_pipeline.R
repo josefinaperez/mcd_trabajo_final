@@ -25,6 +25,13 @@ MODELS_ROOT   <- "data/outputs/sdm_models"
 DATASETS_ROOT <- "data/outputs/sdm_parallel"
 MAPS_ROOT     <- "data/outputs/sdm_maps"
 
+# #47: los env_sets antrópicos son DIAGNÓSTICO de sesgo (¿domina la
+# accesibilidad en XAI?), no predictores ecológicos del mapa final. Se
+# excluyen de la candidatura a ganador para que el mapa de distribución no
+# quede apoyado en travel_time (proxy de esfuerzo de muestreo). Siguen
+# entrenándose y mapeándose como sobrevivientes/comparación.
+WINNER_EXCLUDE_REGEX <- "_anthro"
+
 # ------------------------------------------------------------
 # 1) SELECCIÓN: filtro FNR + argmax TSS por cv_scheme
 # ------------------------------------------------------------
@@ -40,7 +47,7 @@ MAPS_ROOT     <- "data/outputs/sdm_maps"
 # quedan en NA/FALSE para ese esquema.
 # ------------------------------------------------------------
 
-select_runs <- function(summary_df, tau_fnr) {
+select_runs <- function(summary_df, tau_fnr, winner_exclude_regex = NULL) {
   stopifnot(all(c("run_id", "cv_scheme", "algorithm", "tss", "fnr") %in% names(summary_df)))
 
   out <- summary_df |>
@@ -48,9 +55,14 @@ select_runs <- function(summary_df, tau_fnr) {
 
   # Ganador cross-algoritmo: argmax TSS sobre todos los (run_id, algorithm)
   # que pasan el filtro DENTRO de cada cv_scheme. El ganador puede ser
-  # cualquier algoritmo.
-  winners <- out |>
-    filter(passes_filter) |>
+  # cualquier algoritmo. winner_exclude_regex (#47) saca de la candidatura
+  # a los env_sets de diagnóstico (antrópicos), que igual quedan como
+  # sobrevivientes (passes_filter) pero nunca is_winner.
+  winner_pool <- out |> filter(passes_filter)
+  if (!is.null(winner_exclude_regex)) {
+    winner_pool <- winner_pool |> filter(!grepl(winner_exclude_regex, run_id))
+  }
+  winners <- winner_pool |>
     group_by(cv_scheme) |>
     slice_max(tss, n = 1, with_ties = FALSE) |>
     ungroup() |>
@@ -75,9 +87,9 @@ select_runs <- function(summary_df, tau_fnr) {
 # de robustez prometida en §4.5.3 del documento metodológico.
 # ------------------------------------------------------------
 
-compute_tau_fnr_robustness <- function(summary_df, tau_fnr_grid) {
+compute_tau_fnr_robustness <- function(summary_df, tau_fnr_grid, winner_exclude_regex = NULL) {
   purrr::map_dfr(tau_fnr_grid, function(t) {
-    sel <- select_runs(summary_df, t)
+    sel <- select_runs(summary_df, t, winner_exclude_regex)
     survivors <- sel |>
       group_by(cv_scheme) |>
       summarise(n_survivors = sum(passes_filter), .groups = "drop")
@@ -169,13 +181,13 @@ main <- function() {
   summary_df <- readr::read_csv(file.path(MODELS_ROOT, "summary_table.csv"),
                                 show_col_types = FALSE)
 
-  sel <- select_runs(summary_df, TAU_FNR_MAIN)
+  sel <- select_runs(summary_df, TAU_FNR_MAIN, WINNER_EXCLUDE_REGEX)
   if (!any(sel$passes_filter)) {
     stop("Ningún modelo pasa el filtro τ_FNR = ", TAU_FNR_MAIN,
          ". Revisar la distribución empírica de FNR.")
   }
 
-  rob <- compute_tau_fnr_robustness(summary_df, TAU_FNR_GRID)
+  rob <- compute_tau_fnr_robustness(summary_df, TAU_FNR_GRID, WINNER_EXCLUDE_REGEX)
   readr::write_csv(rob, file.path(MAPS_ROOT, "tau_fnr_robustness.csv"))
 
   to_map <- sel |> filter(passes_filter) |> select(run_id, cv_scheme, algorithm)

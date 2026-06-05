@@ -70,10 +70,10 @@ calibrate_block_size <- function(env_raster_paths,
   r <- terra::crop(r, terra::ext(arg_bbox["xmin"], arg_bbox["xmax"],
                                  arg_bbox["ymin"], arg_bbox["ymax"]))
 
-  # 2) Agregar resolución: a 30s nativo, el variograma sobre 19 capas
-  #    es O(n²) y se vuelve impracticable. Aggregate por factor 10
-  #    pasa de ~1 km a ~10 km — suficiente para estimar el range
-  #    de autocorrelación de variables climáticas.
+  # 2) Agregar resolución: a la grilla nativa (2.5 arc-min, ~4.6 km) el
+  #    variograma sobre las capas BIO es O(n²) y se vuelve costoso.
+  #    Aggregate por factor 10 pasa de ~4.6 km a ~46 km — suficiente
+  #    para estimar el range de autocorrelación de variables climáticas.
   if (aggregate_fact > 1L) {
     r <- terra::aggregate(r, fact = aggregate_fact, fun = "mean", na.rm = TRUE)
   }

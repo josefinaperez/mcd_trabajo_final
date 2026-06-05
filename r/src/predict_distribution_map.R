@@ -22,34 +22,49 @@ suppressPackageStartupMessages({
   library(maxnet)   # registra predict.maxnet para terra::predict
 })
 
-BIOCLIM_DIR    <- "data/features/env_2.5m_ar/bioclim"
-VEGETATION_DIR <- "data/features/env_2.5m_ar/vegetation"
-ARGENTINA_SHP  <- "data/shp/argentina/argentina.shp"
+BIOCLIM_DIR     <- "data/features/env_2.5m_ar/bioclim"
+VEGETATION_DIR  <- "data/features/env_2.5m_ar/vegetation"
+SOIL_DIR        <- "data/features/env_2.5m_ar/soil"
+TOPOGRAPHY_DIR  <- "data/features/env_2.5m_ar/topography"
+ANTHROPIC_DIR   <- "data/features/env_2.5m_ar/anthropic"
+ARGENTINA_SHP   <- "data/shp/argentina/argentina.shp"
 
 # ------------------------------------------------------------
 # 1) ENV STACK LOADING
 # ------------------------------------------------------------
 #
-# Levanta el superset de predictores (19 BIO 2.5 arc-min + 4
-# capas de vegetación), todos sobre la misma grilla, los apila
-# en un SpatRaster, los recorta (crop) al bounding box de
-# Argentina y los enmascara (mask) al polígono del país. Las
-# capas se nombran por el basename del .tif (ej. "wc2.1_2.5m_bio_1",
-# "tree_cover_pct"), que coincide con las columnas del dataset.
-# El orquestador subsetea este stack a los predictores reales
-# de cada run, de modo que un modelo bioclim no quede recortado
-# al extent de las capas de vegetación.
+# Levanta el superset de predictores (19 BIO 2.5 arc-min + las
+# capas de vegetación, suelo, topografía y antropización
+# disponibles), todos sobre la misma grilla, los apila en un
+# SpatRaster, los recorta (crop) al bounding box de Argentina y los
+# enmascara (mask) al polígono del país. Las capas se nombran por el
+# basename del .tif (ej. "wc2.1_2.5m_bio_1", "tree_cover_pct",
+# "bdod", "cti", "travel_time"),
+# que coincide con las columnas del dataset. El orquestador
+# subsetea este stack a los predictores reales de cada run, de
+# modo que un modelo bioclim no quede recortado al extent de las
+# capas adicionales. Cada bloque se incluye sólo si su directorio
+# tiene .tif (list.files devuelve vacío si falta), por lo que es
+# resiliente a máquinas donde suelo/topo no estén preparados.
 # ------------------------------------------------------------
 
-load_env_stack <- function(bioclim_dir    = BIOCLIM_DIR,
-                           vegetation_dir = VEGETATION_DIR,
-                           shp_path       = ARGENTINA_SHP) {
+load_env_stack <- function(bioclim_dir     = BIOCLIM_DIR,
+                           vegetation_dir  = VEGETATION_DIR,
+                           soil_dir        = SOIL_DIR,
+                           topography_dir  = TOPOGRAPHY_DIR,
+                           anthropic_dir   = ANTHROPIC_DIR,
+                           shp_path        = ARGENTINA_SHP) {
   tif_paths <- c(
     list.files(bioclim_dir,    pattern = "\\.tif$", full.names = TRUE),
-    list.files(vegetation_dir, pattern = "\\.tif$", full.names = TRUE)
+    list.files(vegetation_dir, pattern = "\\.tif$", full.names = TRUE),
+    list.files(soil_dir,       pattern = "\\.tif$", full.names = TRUE),
+    list.files(topography_dir, pattern = "\\.tif$", full.names = TRUE),
+    list.files(anthropic_dir,  pattern = "\\.tif$", full.names = TRUE)
   )
   if (length(tif_paths) == 0) {
-    stop("load_env_stack: no .tif files in ", bioclim_dir, " / ", vegetation_dir)
+    stop("load_env_stack: no .tif files in ", bioclim_dir, " / ",
+         vegetation_dir, " / ", soil_dir, " / ", topography_dir, " / ",
+         anthropic_dir)
   }
 
   env <- terra::rast(tif_paths)
@@ -122,7 +137,7 @@ binarize_raster <- function(suit_r, threshold) {
 #
 # Compone dos paneles lado a lado: idoneidad continua con
 # escala viridis y mapa binario en τ*. Sobre ambos se
-# superponen las presencias GBIF del run (alpha bajo). Se
+# superponen las presencias GBIF del run. Se
 # usa tidyterra::geom_spatraster para que los SpatRaster
 # se integren limpiamente con ggplot.
 # ------------------------------------------------------------
@@ -144,8 +159,8 @@ plot_map_panel <- function(suit_r, bin_r, run_id, threshold, occ_points) {
     geom_point(
       data = occ_points,
       aes(x = decimalLongitude, y = decimalLatitude),
-      colour = "white", fill = "black",
-      shape = 21, size = 0.6, stroke = 0.2, alpha = 0.55
+      colour = "white", fill = "#e31a1c",
+      shape = 21, size = 1.2, stroke = 0.2, alpha = 0.9
     ) +
     coord_sf(crs = 4326) +
     labs(title = "Idoneidad ambiental (continua)") +
@@ -163,8 +178,8 @@ plot_map_panel <- function(suit_r, bin_r, run_id, threshold, occ_points) {
     geom_point(
       data = occ_points,
       aes(x = decimalLongitude, y = decimalLatitude),
-      colour = "white", fill = "black",
-      shape = 21, size = 0.6, stroke = 0.2, alpha = 0.55
+      colour = "white", fill = "#e31a1c",
+      shape = 21, size = 1.2, stroke = 0.2, alpha = 0.9
     ) +
     coord_sf(crs = 4326) +
     labs(title = "Presencia / no apto (binario)") +

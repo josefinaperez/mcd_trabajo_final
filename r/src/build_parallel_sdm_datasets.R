@@ -73,27 +73,114 @@ sample_random_background <- function(mask_raster,
                                      n = 10000,
                                      seed = 42,
                                      lon_col = "decimalLongitude",
-                                     lat_col = "decimalLatitude") {
+                                     lat_col = "decimalLatitude",
+                                     max_attempts = 8) {
   set.seed(seed)
-  
-  # sample only from non-NA cells
-  pts <- terra::spatSample(
-    x = mask_raster,
-    size = n,
-    method = "random",
-    na.rm = TRUE,
-    as.points = TRUE,
-    values = FALSE
-  )
-  
-  if (is.null(pts) || nrow(pts) == 0) {
+
+  # spatSample(na.rm = TRUE) puede devolver menos de `size` porque descarta
+  # las celdas NA del bounding box (todo lo externo a Argentina + huecos de
+  # validez). Oversampleamos y acumulamos hasta juntar n celdas válidas únicas.
+  have    <- NULL
+  attempt <- 0L
+  while ((is.null(have) || nrow(have) < n) && attempt < max_attempts) {
+    attempt <- attempt + 1L
+    pts <- terra::spatSample(
+      x = mask_raster, size = n * 3L, method = "random",
+      na.rm = TRUE, as.points = TRUE, values = FALSE
+    )
+    if (!is.null(pts) && nrow(pts) > 0) {
+      d    <- as.data.frame(terra::crds(pts))
+      have <- if (is.null(have)) d else unique(rbind(have, d))
+    }
+  }
+
+  if (is.null(have) || nrow(have) == 0) {
     stop("Could not generate random background points from mask raster.")
   }
-  
-  pts_df <- as.data.frame(terra::crds(pts))
+  if (nrow(have) < n) {
+    warning(sprintf("sample_random_background: solo %d celdas válidas únicas (< n = %d).",
+                    nrow(have), n))
+  }
+
+  pts_df <- have[seq_len(min(n, nrow(have))), , drop = FALSE]
   names(pts_df) <- c(lon_col, lat_col)
-  
+  rownames(pts_df) <- NULL
   pts_df
+}
+
+# #48: background target-group (Phillips et al. 2009). En vez de muestrear el
+# fondo de forma uniforme, lo muestrea con probabilidad ∝ una superficie de
+# sesgo (weight_raster), de modo que el background comparta el sesgo espacial
+# de muestreo de las presencias y éste se cancele en el contraste
+# presencia/background. Muestrea centros de celda SIN reemplazo con prob ∝ peso,
+# sobre las celdas válidas de la máscara (no-NA). El weight_raster se alinea a la
+# grilla de la máscara si hace falta.
+sample_weighted_background <- function(mask_raster,
+                                       weight_raster,
+                                       n = 10000,
+                                       seed = 42,
+                                       lon_col = "decimalLongitude",
+                                       lat_col = "decimalLatitude") {
+  set.seed(seed)
+
+  if (!terra::compareGeom(weight_raster, mask_raster, stopOnError = FALSE)) {
+    weight_raster <- terra::resample(weight_raster, mask_raster, method = "bilinear")
+  }
+
+  mask1 <- mask_raster[[1]]
+  valid <- which(!is.na(terra::values(mask1, mat = FALSE)))
+  if (length(valid) == 0) stop("sample_weighted_background: máscara sin celdas válidas.")
+
+  w  <- terra::values(weight_raster, mat = FALSE)[valid]
+  ok <- is.finite(w) & w > 0
+  cells <- valid[ok]
+  w     <- w[ok]
+  if (length(cells) == 0) {
+    stop("sample_weighted_background: ninguna celda válida con peso > 0.")
+  }
+  if (length(cells) < n) {
+    warning(sprintf("sample_weighted_background: solo %d celdas con peso > 0 (< n = %d).",
+                    length(cells), n))
+  }
+
+  size <- min(n, length(cells))
+  idx  <- sample(cells, size = size, replace = FALSE, prob = w / sum(w))
+  xy   <- terra::xyFromCell(mask1, idx)
+
+  pts_df <- as.data.frame(xy)
+  names(pts_df) <- c(lon_col, lat_col)
+  rownames(pts_df) <- NULL
+  pts_df
+}
+
+# #52: background "spatially constrained" (Miyaji estrategia ii; Lobo et al.
+# 2010). Impone un buffer de exclusión geográfica de radio buffer_km alrededor
+# de las presencias y muestrea el background FUERA del buffer. El buffer se
+# calcula en AEA (km) y solo recorta la máscara (celdas dentro del buffer -> NA);
+# el muestreo se delega en sample_random_background, heredando su oversampling y
+# degradación elegante.
+sample_spatially_constrained_background <- function(mask_raster,
+                                                    occ_df,
+                                                    buffer_km = 20,
+                                                    n = 10000,
+                                                    seed = 42,
+                                                    lon_col = "decimalLongitude",
+                                                    lat_col = "decimalLatitude") {
+  aea <- "+proj=aea +lat_1=-5 +lat_2=-42 +lat_0=-32 +lon_0=-60 +datum=WGS84 +units=m +no_defs"
+
+  occ_v   <- terra::vect(occ_df[, c(lon_col, lat_col)],
+                         geom = c(lon_col, lat_col), crs = "EPSG:4326")
+  occ_aea <- terra::project(occ_v, aea)
+  buf_aea <- terra::buffer(occ_aea, width = buffer_km * 1000)        # metros
+  buf     <- terra::aggregate(terra::project(buf_aea, terra::crs(mask_raster)))
+
+  mask_excl <- terra::mask(mask_raster, buf, inverse = TRUE, updatevalue = NA)
+
+  sample_random_background(
+    mask_raster = mask_excl,
+    n = n, seed = seed,
+    lon_col = lon_col, lat_col = lat_col
+  )
 }
 
 extract_env_values <- function(points_df,
@@ -173,6 +260,10 @@ apply_spatial_bias_method <- function(occ_df,
 # little helper for NULL default
 `%||%` <- function(x, y) if (is.null(x)) y else x
 
+# #48: superficie de accesibilidad por defecto para el background target-group
+# (inverso de travel_time). Es la capa antrópica armonizada de #47.
+TRAVEL_TIME_PATH <- "data/features/env_2.5m_ar/anthropic/travel_time.tif"
+
 # ============================================================
 # 3) BACKGROUND-POINT METHODS
 # ============================================================
@@ -218,9 +309,62 @@ generate_background_points <- function(bp_method = "random",
     ))
   }
   
-  # placeholders for future methods
+  # #48: background target-group ponderado por accesibilidad (inverso de
+  # travel_time). El peso decae exponencialmente con el tiempo de viaje:
+  # w = exp(-tt / tau). tau (escala de decaimiento) se calibra con la MEDIANA
+  # del travel_time en las presencias, de modo que el background imite la
+  # accesibilidad observada del muestreo. Así el sesgo de accesibilidad queda
+  # igual en presencia y fondo, y se cancela en el contraste.
+  if (bp_method == "bias_weighted") {
+    n     <- bp_params$n %||% 10000
+    seed  <- bp_params$seed %||% 42
+    wpath <- bp_params$weight_raster_path %||% TRAVEL_TIME_PATH
+    if (!file.exists(wpath)) {
+      stop("bias_weighted: falta la capa de accesibilidad (", wpath,
+           "). Preparar las capas antrópicas (#47) primero.")
+    }
+    tt <- terra::rast(wpath)
+
+    tau <- bp_params$tau
+    if (is.null(tau)) {
+      if (is.null(occ_df)) stop("bias_weighted: se requiere occ_df para calibrar tau.")
+      occ_v <- terra::vect(occ_df[, c(lon_col, lat_col)],
+                           geom = c(lon_col, lat_col), crs = "EPSG:4326")
+      pv  <- terra::extract(tt, occ_v)[[2]]
+      tau <- stats::median(pv, na.rm = TRUE)
+      if (!is.finite(tau) || tau <= 0) {
+        tau <- stats::median(terra::values(tt, mat = FALSE), na.rm = TRUE)
+      }
+    }
+    message(sprintf("    bias_weighted: tau (mediana tt presencias) = %.1f", tau))
+    weight_r <- exp(-tt / tau)
+
+    return(sample_weighted_background(
+      mask_raster   = mask_raster,
+      weight_raster = weight_r,
+      n             = n,
+      seed          = seed,
+      lon_col       = lon_col,
+      lat_col       = lat_col
+    ))
+  }
+
+  # #52: estrategia (ii) Spatially Constrained. Buffer de exclusión geográfica
+  # (buffer_km, default 20) alrededor de las presencias; PA fuera del buffer.
   if (bp_method == "spatially_constrained") {
-    stop("spatially_constrained BP not implemented yet.")
+    if (is.null(occ_df)) {
+      stop("spatially_constrained: requiere occ_df para construir el buffer.")
+    }
+    buffer_km <- bp_params$buffer_km %||% 20
+    n    <- bp_params$n %||% 10000
+    seed <- bp_params$seed %||% 42
+    return(sample_spatially_constrained_background(
+      mask_raster = mask_raster,
+      occ_df = occ_df,
+      buffer_km = buffer_km,
+      n = n, seed = seed,
+      lon_col = lon_col, lat_col = lat_col
+    ))
   }
   
   if (bp_method == "environmentally_dissimilar") {
@@ -234,72 +378,6 @@ generate_background_points <- function(bp_method = "random",
   stop("Unknown BP generation method: ", bp_method)
 }
 
-
-###### sample_random_background_from_shp
-#### Provisorio para sacar puntos de un shp
-#### Luego debería hacerse un híbrido, sacar puntos de la intersección
-#### del shp de arg con los rasters de vars ambientales!!!
-
-sample_random_background_from_shp <- function(shp_path,
-                                              n = 10000,
-                                              seed = 42,
-                                              lon_col = "decimalLongitude",
-                                              lat_col = "decimalLatitude",
-                                              max_attempts = 5,
-                                              oversample_factor = 3) {
-  set.seed(seed)
-
-  # Leer shapefile
-  study_area <- st_read(shp_path, quiet = TRUE)
-
-  # Asegurar geometrías válidas
-  study_area <- st_make_valid(study_area)
-
-  # Unificar en una sola geometría por si hay varias partes
-  study_area <- st_union(study_area)
-
-  # Convertir a sf
-  study_area <- st_as_sf(study_area)
-
-  # st_sample con type = "random" devuelve aproximadamente `size` puntos
-  # (proceso Poisson). Para n chico puede dar 0; oversampleamos y recortamos.
-  # Acumulamos en lista de sfc y concatenamos con do.call(c, ...) para
-  # preservar la clase sfc (c(list(), sfc) la pierde).
-  batches <- vector("list", 0)
-  n_have  <- 0L
-  attempt <- 0L
-
-  while (n_have < n && attempt < max_attempts) {
-    attempt <- attempt + 1L
-    target  <- max(n * oversample_factor, 50L)
-    new_pts <- st_sample(study_area, size = target, type = "random")
-    if (length(new_pts) > 0) {
-      batches[[length(batches) + 1L]] <- new_pts
-      n_have <- n_have + length(new_pts)
-    }
-  }
-
-  if (n_have == 0) {
-    stop("No se pudieron generar puntos aleatorios dentro del shapefile.")
-  }
-
-  pts <- do.call(c, batches)
-  if (length(pts) > n) pts <- pts[seq_len(n)]
-
-  pts_sf <- st_sf(geometry = pts, crs = st_crs(study_area))
-  
-  # Pasar a lon/lat si hiciera falta
-  pts_sf <- st_transform(pts_sf, 4326)
-  
-  coords <- st_coordinates(pts_sf)
-  
-  pts_df <- setNames(
-    data.frame(coords[, 1], coords[, 2]),
-    c(lon_col, lat_col)
-  )
-  
-  pts_df
-}
 
 # ============================================================
 # 4) BUILD ONE DATASET CONFIG
@@ -353,7 +431,14 @@ build_one_sdm_dataset <- function(config_row,
   }
 
   env_rast   <- terra::rast(env_info$files)
-  mask_layer <- env_rast[[1]]  # use first layer as valid-area mask
+  # #37: máscara de validez = celdas con dato en TODAS las capas del env_set.
+  # Como los rásters de env_2.5m_ar/ ya vienen recortados a Argentina, esto
+  # equivale a la intersección validez-ráster ∩ polígono del país. sum()
+  # propaga NA: una celda con NA en cualquier capa queda NA y no se muestrea
+  # como background (evita filas que luego se descartarían). La intersección
+  # es por env_set, de modo que cada conjunto muestrea su dominio real (p. ej.
+  # las capas de suelo, con más NA, restringen el fondo de los env_set de suelo).
+  valid_mask <- sum(env_rast)
 
   # 1) read occurrences
   occ_path <- file.path(occ_dir, occ_file)
@@ -379,20 +464,11 @@ build_one_sdm_dataset <- function(config_row,
     fixed_bp_n = fixed_bp_n
   )
 
-  # bg_df <- generate_background_points(
-  #   bp_method = bp_method,
-  #   bp_params = list(n = bp_n, seed = 42),
-  #   mask_raster = mask_layer,
-  #   occ_df = occ_processed,
-  #   lon_col = lon_col,
-  #   lat_col = lat_col
-  # ) |>
-  #   mutate(class = 0L)
-  
-  bg_df <- sample_random_background_from_shp(
-    shp_path = "data/shp/argentina/argentina.shp",
-    n = bp_n,
-    seed = 42,
+  bg_df <- generate_background_points(
+    bp_method = bp_method,
+    bp_params = list(n = bp_n, seed = 42),
+    mask_raster = valid_mask,
+    occ_df = occ_processed,
     lon_col = lon_col,
     lat_col = lat_col
   ) |>
@@ -495,10 +571,12 @@ make_config_table <- function(species_table,
                               bp_methods = c("random"),
                               bp_n_strategies = c("fixed", "match_presence"),
                               fixed_bp_n = 10000L,
-                              env_sets = c("bioclim_30s"),
-                              grid_sizes_km = c(10, 25, 50)) {
+                              env_sets = c("bioclim"),
+                              grid_sizes_km = c(10, 25, 50),
+                              bias_weighted_env_sets = character(0),
+                              spatially_constrained_env_sets = character(0)) {
   stopifnot(all(c("species", "occ_file") %in% names(species_table)))
-  
+
   none_rows <- species_table |>
     tidyr::crossing(
       bias_method   = "none",
@@ -508,7 +586,7 @@ make_config_table <- function(species_table,
       fixed_bp_n    = fixed_bp_n,
       env_set       = env_sets
     )
-  
+
   grid_rows <- species_table |>
     tidyr::crossing(
       bias_method   = "grid_thin",
@@ -518,8 +596,43 @@ make_config_table <- function(species_table,
       fixed_bp_n    = fixed_bp_n,
       env_set       = env_sets
     )
-  
-  configs <- bind_rows(none_rows, grid_rows) |>
+
+  # #48: background target-group (bias_weighted) SOLO con bias_method=none y
+  # solo sobre los env_sets ecológicos indicados (sin antrópicos). Se compara
+  # contra el background aleatorio de none_rows sobre los mismos env_sets.
+  bw_rows <- if (length(bias_weighted_env_sets) > 0) {
+    species_table |>
+      tidyr::crossing(
+        bias_method   = "none",
+        bias_param    = NA_real_,
+        bp_method     = "bias_weighted",
+        bp_n_strategy = bp_n_strategies,
+        fixed_bp_n    = fixed_bp_n,
+        env_set       = bias_weighted_env_sets
+      )
+  } else {
+    NULL
+  }
+
+  # #52: background spatially_constrained SOLO con bias_method=none, sobre los
+  # env_sets ecológicos indicados. Se compara contra el background aleatorio
+  # (none_rows) sobre los mismos env_sets. buffer_km queda como constante en el
+  # sampler (no entra al run_id porque usamos un único radio).
+  sc_rows <- if (length(spatially_constrained_env_sets) > 0) {
+    species_table |>
+      tidyr::crossing(
+        bias_method   = "none",
+        bias_param    = NA_real_,
+        bp_method     = "spatially_constrained",
+        bp_n_strategy = bp_n_strategies,
+        fixed_bp_n    = fixed_bp_n,
+        env_set       = spatially_constrained_env_sets
+      )
+  } else {
+    NULL
+  }
+
+  configs <- bind_rows(none_rows, grid_rows, bw_rows, sc_rows) |>
     mutate(
       bp_n_strategy = as.character(bp_n_strategy),
       bp_n_label = ifelse(

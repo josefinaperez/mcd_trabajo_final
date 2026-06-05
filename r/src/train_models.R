@@ -107,6 +107,11 @@ fit_model <- function(algo, X, y, hp = list(), seed = 42) {
   algo <- match.arg(algo, SUPPORTED_ALGOS)
   hp   <- utils::modifyList(ALGO_DEFAULTS[[algo]], hp)
 
+  # Balance presencia/background por cantidad de pseudoausencias según algoritmo
+  # (Barbet-Massin et al. 2012), resuelto aguas arriba en el pareo algo→estrategia
+  # de background (train_pipeline.R): maxnet con background fijo (su ponderación
+  # Maxent interna 1:100 cumple el rol de balance) y árboles con match_presence
+  # (n_bg = n_pres). Por eso fit_model no aplica pesos por observación.
   if (algo == "maxnet") {
     args <- list(p = y, data = as.data.frame(X), regmult = hp$regmult)
     if (!is.null(hp$classes)) args$classes <- hp$classes

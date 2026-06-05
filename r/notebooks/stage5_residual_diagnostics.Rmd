@@ -1,0 +1,94 @@
+---
+title: "Etapa 5 — Autocorrelación espacial de residuos"
+output:
+  html_document:
+    toc: true
+    toc_depth: 2
+    theme: readable
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, message = FALSE, warning = FALSE)
+suppressPackageStartupMessages({
+  library(readr); library(dplyr); library(tibble); library(knitr)
+})
+RES_ROOT <- "../../data/outputs/sdm_residuals"
+summary_tbl <- readr::read_csv(file.path(RES_ROOT, "summary.csv"),
+                               show_col_types = FALSE)
+```
+
+# Resumen
+
+Esta etapa evalúa si quedan **patrones espaciales no explicados** en los
+residuos del modelo ganador (Etapa 3). Para cada ganador se calcula el
+**índice de Moran (Moran's I)** sobre el residuo crudo `class − score` en
+todos los puntos de evaluación del pool spatial-block (presencias +
+background), con pesos de los **8 vecinos más cercanos** y p-valor por
+**permutación Monte Carlo** (999 simulaciones, alternativa "greater").
+
+- **I ≈ E[I] = −1/(n−1) y p no significativo** ⇒ no queda estructura
+  espacial residual: la validación spatial-block y los predictores capturan
+  la señal espacial.
+- **I > 0 significativo** ⇒ queda autocorrelación espacial en los residuos
+  (predictor faltante o violación de independencia). El correlograma indica
+  a qué escala.
+
+```{r summary-table}
+summary_tbl |>
+  dplyr::transmute(
+    run_id, cv_scheme, algorithm,
+    moran_i = round(moran_i, 4),
+    `E[I]`  = signif(expectation, 3),
+    p_value = signif(p_value, 3),
+    n, k
+  ) |>
+  knitr::kable(caption = "Moran's I de residuos por ganador")
+```
+
+```{r helpers}
+run_dir <- function(row) file.path(RES_ROOT, row$run_id, row$cv_scheme,
+                                   row$algorithm)
+```
+
+# Mapa de residuos
+
+```{r residual-maps, results='asis'}
+for (i in seq_len(nrow(summary_tbl))) {
+  d <- run_dir(summary_tbl[i, ])
+  png <- file.path(d, "residual_map.png")
+  if (file.exists(png)) {
+    cat("\n\n**", summary_tbl$run_id[i], "**\n\n", sep = "")
+    cat("![](", png, ")\n", sep = "")
+  }
+}
+```
+
+# Correlograma por bandas de distancia
+
+```{r correlograms, results='asis'}
+for (i in seq_len(nrow(summary_tbl))) {
+  d <- run_dir(summary_tbl[i, ])
+  png <- file.path(d, "correlogram.png")
+  if (file.exists(png)) {
+    cat("\n\n**", summary_tbl$run_id[i], "**\n\n", sep = "")
+    cat("![](", png, ")\n", sep = "")
+  }
+}
+```
+
+```{r correlogram-tables}
+for (i in seq_len(nrow(summary_tbl))) {
+  d <- run_dir(summary_tbl[i, ])
+  csv <- file.path(d, "correlogram.csv")
+  if (file.exists(csv)) {
+    tbl <- readr::read_csv(csv, show_col_types = FALSE) |>
+      dplyr::transmute(
+        `dist (km)` = dist_mid / 1000,
+        moran_i = round(moran_i, 4),
+        p_value = signif(p_value, 3),
+        n_links
+      )
+    print(knitr::kable(tbl, caption = summary_tbl$run_id[i]))
+  }
+}
+```

@@ -39,6 +39,17 @@ BLOCK_SIZE_CAP_KM <- 300L
 CV_SCHEMES     <- c("spatial_block")
 ALGOS          <- c("maxnet", "ranger", "xgboost")
 
+# #46: cantidad de pseudoausencias según algoritmo (Barbet-Massin et al. 2012).
+# maxnet (máxima entropía / regresión) entrena con background fijo (10 000); los
+# clasificadores de árboles entrenan con match_presence (n_bg = n_pres). Cada
+# algoritmo entrena ÚNICAMENTE sobre los datasets cuya bp_n_strategy coincide con
+# la suya; los pares (run × algo) que no matchean se omiten del grid.
+ALGO_BP_STRATEGY <- c(
+  maxnet  = "fixed",
+  ranger  = "match_presence",
+  xgboost = "match_presence"
+)
+
 # Idempotencia: por defecto se saltea cualquier (run × cv × algo) ya entrenado
 # en disco. Forzar reentrenamiento completo con SDM_FORCE=1 en el entorno.
 # Los helpers model_artifacts_exist() / read_basic_metrics() viven en
@@ -166,7 +177,18 @@ train_grid <- tidyr::expand_grid(
   cv_scheme = CV_SCHEMES,
   algo      = ALGOS,
   i         = seq_len(nrow(datasets_manifest))
-)
+) |>
+  # #46: cada algoritmo entrena solo sobre datasets de su estrategia de background.
+  mutate(bp_n_strategy = datasets_manifest$bp_n_strategy[i]) |>
+  filter(bp_n_strategy == ALGO_BP_STRATEGY[algo]) |>
+  select(-bp_n_strategy)
+
+message(sprintf("Entrenando %d pares (run × algo) tras el pareo algo→background (#46):",
+                nrow(train_grid)))
+train_grid |>
+  count(algo, name = "n_runs") |>
+  purrr::pwalk(function(algo, n_runs)
+    message(sprintf("  %-8s %s -> %d runs", algo, ALGO_BP_STRATEGY[[algo]], n_runs)))
 
 basic_metrics_per_run <- purrr::pmap_dfr(
   train_grid,
@@ -207,8 +229,22 @@ write_csv(models_manifest, file.path(MODELS_ROOT, "manifest.csv"))
 # 6) Tabla resumen y plots comparativos
 # ------------------------------------------------------------
 
+# Orden de env_sets por familia (base → +veg → +topo → +soil → combinados),
+# con el full inmediatamente seguido de su _reduced. Así la paleta "Paired"
+# (pares claro/oscuro) asigna a cada familia un par de colores y full/reduced
+# quedan visualmente emparentados. Solo se conservan los niveles presentes.
+ENV_SET_ORDER <- c(
+  "bioclim",          "bioclim_reduced",
+  "bioclim_veg",      "bioclim_veg_reduced",
+  "bioclim_topo",     "bioclim_topo_reduced",
+  "bioclim_soil",     "bioclim_soil_reduced",
+  "bioclim_veg_topo", "bioclim_veg_topo_reduced",
+  "bioclim_veg_soil", "bioclim_veg_soil_reduced"
+)
+
 summary_table <- models_manifest |>
   mutate(
+    env_set    = factor(env_set, levels = intersect(ENV_SET_ORDER, unique(env_set))),
     bias_label = if_else(bias_method == "none",
                          "sin corrección",
                          paste0("grid ", bias_param, "km")),
@@ -216,7 +252,7 @@ summary_table <- models_manifest |>
                          paste0("BG = ", bp_n),
                          "BG = n presencias")
   ) |>
-  select(run_id, cv_scheme, algorithm, species, bias_label, bp_label,
+  select(run_id, cv_scheme, algorithm, species, env_set, bias_label, bp_label,
          n_train_pres, n_test_pres, n_train_bg, n_test_bg,
          auc_test, threshold_max_tss, sensitivity, specificity,
          tss, fnr, boyce, train_secs) |>
@@ -224,45 +260,53 @@ summary_table <- models_manifest |>
 
 write_csv(summary_table, file.path(MODELS_ROOT, "summary_table.csv"))
 
-# 6a) AUC por configuración, faceteado por cv_scheme × algorithm
+# 6a) AUC por env_set, barras por algoritmo, faceteado por bias × background.
+#     env_set es el eje protagonista: deja ver si veg/topo/suelo aportan
+#     sobre bioclim, en cada combinación de sesgo y background.
 auc_plot <- summary_table |>
-  ggplot(aes(x = bias_label, y = auc_test, fill = bp_label)) +
+  ggplot(aes(x = env_set, y = auc_test, fill = algorithm)) +
   geom_col(position = position_dodge(width = 0.8), width = 0.7) +
   geom_hline(yintercept = 0.5, linetype = "dashed", color = "grey40") +
-  facet_grid(cv_scheme ~ algorithm) +
-  labs(x = "Corrección de sesgo espacial",
+  facet_grid(bias_label ~ bp_label) +
+  labs(x = "Conjunto de predictores (env_set)",
        y = "AUC (test)",
-       fill = "Background points",
-       title = "AUC por configuración — cv_scheme × algoritmo") +
+       fill = "Algoritmo",
+       title = "AUC por env_set — sesgo × background",
+       subtitle = "Facet: corrección de sesgo (filas) × background (columnas)") +
   theme_minimal() +
-  theme(axis.text.x = element_text(angle = 20, hjust = 1))
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
 
 ggsave(file.path(MODELS_ROOT, "auc_comparison.png"),
-       auc_plot, width = 12, height = 6, dpi = 120)
+       auc_plot, width = 14, height = 8, dpi = 120)
 
-# 6b) TSS vs FNR (criterio Miyaji), color por algoritmo, facet por cv_scheme
+# 6b) TSS vs FNR (criterio Miyaji), color por env_set, forma por algoritmo,
+#     facet por corrección de sesgo. Es el plot de decisión: el cuadrante
+#     sup-izq (TSS alto, FNR bajo) muestra qué env_set discrimina mejor.
 dual_plot <- summary_table |>
-  ggplot(aes(x = fnr, y = tss, color = algorithm, shape = bias_label)) +
+  ggplot(aes(x = fnr, y = tss, color = env_set, shape = algorithm)) +
   geom_point(size = 3, alpha = 0.85) +
-  facet_wrap(~ cv_scheme) +
+  facet_wrap(~ bias_label) +
+  scale_color_brewer(palette = "Paired", drop = FALSE) +
   scale_x_continuous(limits = c(0, 1)) +
   scale_y_continuous(limits = c(0, 1)) +
   labs(x = "FNR  (menor es mejor)",
        y = "TSS  (mayor es mejor)",
-       title = "TSS vs FNR — cross-algoritmo",
-       subtitle = "Cuadrante sup-izq: consistente y discriminatorio") +
+       color = "env_set",
+       shape = "Algoritmo",
+       title = "TSS vs FNR — por env_set y algoritmo",
+       subtitle = "Cuadrante sup-izq: consistente y discriminatorio · facet por corrección de sesgo") +
   theme_minimal(base_size = 11) +
-  theme(legend.position = "bottom")
+  theme(legend.position = "right")
 
 ggsave(file.path(MODELS_ROOT, "dual_metrics_comparison.png"),
-       dual_plot, width = 11, height = 6, dpi = 120)
+       dual_plot, width = 13, height = 6, dpi = 120)
 
 # 6c) Ranking por TSS dentro de cada (cv_scheme, algorithm)
 rank_compare <- summary_table |>
   group_by(cv_scheme, algorithm) |>
   mutate(rank_tss = rank(-tss, ties.method = "min")) |>
   ungroup() |>
-  select(run_id, cv_scheme, algorithm, rank_tss, tss, fnr, boyce) |>
+  select(run_id, cv_scheme, algorithm, env_set, rank_tss, tss, fnr, boyce) |>
   arrange(cv_scheme, algorithm, rank_tss)
 
 write_csv(rank_compare, file.path(MODELS_ROOT, "rank_compare_spatial_block.csv"))

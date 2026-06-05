@@ -30,16 +30,20 @@ source("r/src/env_selection_pipeline.R")
 #    under spatial-block CV; persist per-run artifacts + summary.
 source("r/src/train_pipeline.R")
 
-# 4) Prediction maps and XAI (SHAP/PDP/LIME). NOTE: these two must be run with
-#    `Rscript r/src/<file>.R` directly — they branch on sys.nframe() and skip the
-#    main block when source()'d interactively.
+# 4) Prediction maps, XAI (SHAP/PDP/LIME) and residual spatial-autocorrelation
+#    diagnostics. NOTE: these must be run with `Rscript r/src/<file>.R` directly
+#    — they branch on sys.nframe() and skip the main block when source()'d.
+#    residual_autocorr_pipeline.R reads predict's winner_summary.csv, so run it
+#    after predict_pipeline.R.
 #    Rscript r/src/predict_pipeline.R
 #    Rscript r/src/xai_pipeline.R
+#    Rscript r/src/residual_autocorr_pipeline.R
 
 # 5) (Optional) Render the display-only notebooks from the persisted outputs
 rmarkdown::render("r/notebooks/stage1_maxent.Rmd")        # metrics + curves
 rmarkdown::render("r/notebooks/stage3_distribution_map.Rmd")
 rmarkdown::render("r/notebooks/stage4_xai.Rmd")
+rmarkdown::render("r/notebooks/stage5_residual_diagnostics.Rmd")
 ```
 
 **Convention**: scripts under `r/src/` do all the computation and write artifacts to disk. Notebooks under `r/notebooks/` are **display-only** — they `read_csv` / `include_graphics` from `data/outputs/...` and never train, fit, or transform. If a notebook needs new data, add it to the corresponding `*_pipeline.R` first.
@@ -65,9 +69,9 @@ The active RStudio project is `r/mcd_trabajo_final.Rproj`. The top-level `mcd_tr
 All predictors are harmonized to a single reference grid — **2.5 arc-min (~4.6 km), EPSG:4326, clipped to Argentina** — so models across `env_set`s are comparable. The `env_set` (which variables) is the hyperparameter; the resolution is fixed.
 
 - `r/src/env_layers.R` — **pure functions** (no I/O): `crop_mask_to_region`, `align_to_template`, `cover_fraction`, `temporal_mean`, `temporal_amplitude`, `fill_na`, `interior_na_fraction` (QA: fraction of NA cells inside the region). Unit-tested on synthetic rasters by `r/checks/check_env_layers.R`.
-- `r/src/prepare_env_layers.R` — **orchestrator** (the only place with raster I/O for layer prep). Builds the reference grid from WorldClim 2.5m bioclim, then aligns vegetation, topography and soil to it, writing to `data/features/env_2.5m_ar/{bioclim,vegetation,topography,soil}/*.tif`. It is **resilient to partial downloads**: the grid is always built; the vegetation, topography and soil blocks each run only if all their raw inputs are present (`veg_ready` / `topo_ready` / `soil_ready` guards), otherwise they skip with a message. Heavy downsampling (e.g. ESA WorldCover 10m, INTA canopy 30m, Geomorpho90m 90m, SoilGrids 250m) is done via GDAL warp (`sf::gdal_utils`) with `-r average`, then `align_to_template`.
-  - **Topography & soil** share a generic helper `build_aggregated_layers(raw_dir, vars, out_dir, template, ar)` (VRT → warp average → align → crop, **no** `fill_na` — NA = no data, unlike canopy where NA→0). `build_topography_layers` (Geomorpho90m `cti`/`slope`/`tpi`/`tri`, raw under `data/features/topography_raw/`) and `build_soil_layers` (SoilGrids 0-5cm `phh2o`/`soc`/`sand`/`silt`/`clay`/`cec`/`bdod`, raw under `data/features/soil_raw/`, exported from GEE already rescaled to conventional units) are thin wrappers. Verified by the guarded `r/checks/check_topography_layers.R` and `r/checks/check_soil_layers.R` (alignment + interior-NA coverage).
-- **`env_sets`** are assembled in `dataset_pipeline.R` by `list.files()` over those output dirs: `bioclim`, `bioclim_veg`, and (if prepared) `bioclim_topo`, `bioclim_veg_topo`, `bioclim_soil`, `bioclim_veg_soil`. Each also gets a non-collinear `*_reduced` variant **iff** the matching `data/outputs/env_selection/selected_vars*.csv` exists (`register_reduced_env_set`).
+- `r/src/prepare_env_layers.R` — **orchestrator** (the only place with raster I/O for layer prep). Builds the reference grid from WorldClim 2.5m bioclim, then aligns vegetation, topography, soil and anthropic layers to it, writing to `data/features/env_2.5m_ar/{bioclim,vegetation,topography,soil,anthropic}/*.tif`. It is **resilient to partial downloads**: the grid is always built; the vegetation, topography, soil and anthropic blocks each run only if all their raw inputs are present (`veg_ready` / `topo_ready` / `soil_ready` / `anthro_ready` guards), otherwise they skip with a message. Heavy downsampling (e.g. ESA WorldCover 10m, INTA canopy 30m, Geomorpho90m 90m, SoilGrids 250m) is done via GDAL warp (`sf::gdal_utils`) with `-r average`, then `align_to_template`.
+  - **Topography, soil & anthropic** share a generic helper `build_aggregated_layers(raw_dir, vars, out_dir, template, ar)` (VRT → warp average → align → crop, **no** `fill_na` — NA = no data, unlike canopy where NA→0). `build_topography_layers` (Geomorpho90m `cti`/`slope`/`tpi`/`tri`, raw under `data/features/topography_raw/`), `build_soil_layers` (SoilGrids 0-5cm `phh2o`/`soc`/`sand`/`silt`/`clay`/`cec`/`bdod`, raw under `data/features/soil_raw/`, exported from GEE already rescaled to conventional units) and `build_anthropic_layers` (issue #47: `travel_time` = accessibility to cities (Weiss 2018) + `human_modification` = gHM index (Kennedy 2019), raw under `data/features/anthropic_raw/`, exported from GEE) are thin wrappers. Verified by the guarded `r/checks/check_topography_layers.R`, `check_soil_layers.R` and `check_anthropic_layers.R` (alignment + interior-NA coverage).
+- **`env_sets`** are assembled in `dataset_pipeline.R` by `list.files()` over those output dirs: `bioclim`, `bioclim_veg`, and (if prepared) `bioclim_topo`, `bioclim_veg_topo`, `bioclim_soil`, `bioclim_veg_soil`, `bioclim_anthro`, `bioclim_veg_anthro`. Each also gets a non-collinear `*_reduced` variant **iff** the matching `data/outputs/env_selection/selected_vars*.csv` exists (`register_reduced_env_set`). The **anthropic** env_sets (#47) are a **bias diagnostic**, not ecological predictors: if `travel_time`/`human_modification` dominate the winner's XAI, the GBIF sample is accessibility-driven rather than ecology-driven (expected for wood-decay fungi) — a reportable negative result.
 - `r/src/env_selection_pipeline.R` + `select_env_vars.R` — collinearity reduction (`|r| > cutoff`) per env_set over a reference dataset; writes `selected_vars{,_veg,_topo,_veg_topo,_soil,_veg_soil}.csv` consumed by the reduced env_sets. **Multi-pass:** build datasets for the base env_sets → run selection → re-run `dataset_pipeline.R` to materialize the `*_reduced` datasets.
 
 ### Model training
@@ -82,7 +86,9 @@ Two-layer split, **algorithm-agnostic**:
 
 Prediction maps and explainability are separate stages: `predict_pipeline.R` (+ `predict_distribution_map.R`) and `xai_pipeline.R` (+ `xai_shap.R` / `xai_pdp.R` / `xai_lime.R`, dispatched via `xai_predict.R`). Both **must be run with `Rscript` directly** (they guard their main block on `sys.nframe()`).
 
-The display-only notebooks (`stage1_maxent.Rmd` metrics/curves, `stage3_distribution_map.Rmd`, `stage4_xai.Rmd`) `read_csv` / `include_graphics` from `data/outputs/...`. **Notebook paths are relative to `r/notebooks/` (e.g. `../../data/...`)** — different from the source scripts, which assume the working directory is the repo root.
+**Residual spatial-autocorrelation diagnostics** (issue #34): `residual_autocorr_pipeline.R` (+ pure functions in `residual_autocorrelation.R`, tested by `r/checks/check_residual_autocorrelation.R`). For each winner in `predict_pipeline`'s `winner_summary.csv`, it reads the pooled spatial-block `predictions_test.csv`, computes raw residuals (`class − score`) over all evaluation points, and runs **Moran's I** (k=8 nearest-neighbour weights, AEA projection) with a Monte-Carlo permutation p-value (`spdep::moran.mc`) plus a distance-band correlogram and a residual map. Writes `morans_i.csv`, `correlogram.csv`, `residual_map.png`, `correlogram.png` per winner and a top-level `summary.csv` under `data/outputs/sdm_residuals/`. Same `Rscript`-only / `sys.nframe()` / skip-if-exists+`SDM_FORCE` conventions; **depends on `predict_pipeline.R` having produced `winner_summary.csv`**. New CRAN dependency: `spdep`.
+
+The display-only notebooks (`stage1_maxent.Rmd` metrics/curves, `stage3_distribution_map.Rmd`, `stage4_xai.Rmd`, `stage5_residual_diagnostics.Rmd`) `read_csv` / `include_graphics` from `data/outputs/...`. **Notebook paths are relative to `r/notebooks/` (e.g. `../../data/...`)** — different from the source scripts, which assume the working directory is the repo root.
 
 ### Working-directory contract
 
@@ -99,6 +105,7 @@ The `manifest.csv` files are the integration contract between stages. The datase
 - **WorldClim 2.5m bioclim** at `data/features/worldclim/wc2.1_2.5m_bio/` (the reference grid).
 - **Vegetation** raw at `data/features/vegetation_raw/` (ESA WorldCover tiles, MODIS NDVI, INTA canopy height).
 - **Topography** raw at `data/features/topography_raw/{cti,slope,tpi,tri}/` (Geomorpho90m; e.g. clipped GeoTIFFs exported from Google Earth Engine `projects/sat-io/open-datasets/Geomorpho90m/*`).
+- **Anthropic** (#47) raw at `data/features/anthropic_raw/{travel_time,human_modification}/` (GEE: `Oxford/MAP/accessibility_to_cities_2015_v1_0` + `CSP/HM/GlobalHumanModification`, clipped to Argentina at ~1km; see `data/features/anthropic_raw/GEE_export.js`).
 - **Argentina shapefile** at `data/shp/argentina/argentina.shp`.
 
 `prepare_env_layers.R` turns these into the harmonized `data/features/env_2.5m_ar/` set that the dataset pipeline consumes.
@@ -106,5 +113,7 @@ The `manifest.csv` files are the integration contract between stages. The datase
 ## Caveats when editing
 
 - **`r/src/borrador/`** is a scratch/draft folder ("borrador" = draft). Don't treat its contents as authoritative when refactoring.
-- Two background-generation paths exist in `build_parallel_sdm_datasets.R`: a raster-mask `generate_background_points()` (currently commented out) and `sample_random_background_from_shp()` (currently active). The shapefile-based one is marked "provisorio" — the intent per the in-file comment is to eventually intersect raster validity with the Argentina polygon.
+- Background generation in `build_parallel_sdm_datasets.R` uses `generate_background_points()`, which dispatches on `bp_method`:
+  - `"random"` → `sample_random_background()`, sampling over a per-`env_set` validity mask (`valid_mask <- sum(env_rast)`: NA wherever any layer is NA). Since the `env_2.5m_ar/` layers are already clipped to Argentina, this is the intersection of raster validity ∩ the country polygon, so no background falls in NA cells (issue #37). The old shapefile sampler (`sample_random_background_from_shp()`) was removed.
+  - `"bias_weighted"` (issue #48, target-group / Phillips et al. 2009) → `sample_weighted_background()`, which samples cells with probability ∝ an **accessibility** surface `w = exp(-travel_time / τ)` (τ = median `travel_time` at the presences). This makes the background share the presences' sampling bias so accessibility **cancels** in the presence/background contrast — bias correction *without* putting the anthropic variable in the model. Registered in `make_config_table` via `bias_weighted_env_sets` (ecological env_sets only, `bias_method="none"`), so `bp-bias_weighted` runs sit alongside the `bp-random` ones for comparison. Needs the #47 `travel_time` layer (`TRAVEL_TIME_PATH`); `dataset_pipeline.R` only enables it if that layer exists. Verified by `r/checks/check_weighted_background.R`.
 - `bias_method = "grid_thin"` paths in `build_one_sdm_dataset` require `grid_thin_gbif()` to be in scope; `dataset_pipeline.R` sources it transitively, so re-source the pipeline rather than calling builder helpers directly.
