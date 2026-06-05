@@ -249,7 +249,10 @@ config_table <- make_config_table(
   bias_weighted_env_sets = bias_weighted_env_sets,
   # #52: spatially_constrained no depende de capas antrópicas -> siempre sobre
   # los env_sets ecológicos. Se compara contra el background aleatorio.
-  spatially_constrained_env_sets = eco_env_sets
+  spatially_constrained_env_sets = eco_env_sets,
+  # #53: environmentally_dissimilar (OCSVM) tampoco depende de capas antrópicas
+  # -> siempre sobre los env_sets ecológicos.
+  environmentally_dissimilar_env_sets = eco_env_sets
 )
 
 manifest <- build_parallel_sdm_datasets(

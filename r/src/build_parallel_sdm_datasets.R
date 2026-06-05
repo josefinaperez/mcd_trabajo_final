@@ -183,6 +183,74 @@ sample_spatially_constrained_background <- function(mask_raster,
   )
 }
 
+# #53: background "environmentally dissimilar" (Miyaji estrategia iii; Chefaoui &
+# Lobo 2008). Selecciona PA de zonas ambientalmente DISTINTAS al nicho realizado
+# de la especie, forzando al modelo a discriminar sobre gradientes ambientales
+# claros. El envelope del nicho se define con un One-Class SVM (Schölkopf et al.
+# 2001) entrenado sobre el env de las presencias; las celdas que el OCSVM
+# clasifica como outlier (fuera del envelope) son las candidatas disímiles, de
+# donde se muestrea uniformemente. nu es la cota superior de la fracción de
+# presencias rechazadas: nu chico (0.1) = envelope permisivo (casi todas las
+# presencias adentro), de modo que solo se etiquetan como disímiles las celdas
+# claramente fuera del nicho y no se contamina el fondo con hábitat adecuado.
+sample_environmentally_dissimilar_background <- function(env_rast, occ_df,
+                                                         nu = 0.1, gamma = NULL,
+                                                         n = 10000, seed = 42,
+                                                         lon_col = "decimalLongitude",
+                                                         lat_col = "decimalLatitude") {
+  if (!requireNamespace("e1071", quietly = TRUE)) {
+    stop("environmentally_dissimilar: falta el paquete 'e1071' (OCSVM). ",
+         "Instalar con install.packages('e1071').")
+  }
+  set.seed(seed)
+
+  var_names <- names(env_rast)
+
+  # 1) env en las presencias -> matriz sin NA (define el envelope del nicho)
+  occ_v   <- terra::vect(occ_df[, c(lon_col, lat_col)],
+                         geom = c(lon_col, lat_col), crs = "EPSG:4326")
+  pres    <- terra::extract(env_rast, occ_v)
+  pres    <- pres[, var_names, drop = FALSE]
+  pres    <- pres[stats::complete.cases(pres), , drop = FALSE]
+  if (nrow(pres) < 2) {
+    stop("environmentally_dissimilar: muy pocas presencias con env completo para entrenar el OCSVM.")
+  }
+  pres_mat <- as.matrix(pres)
+  if (is.null(gamma)) gamma <- 1 / ncol(pres_mat)   # default RBF sobre datos escalados
+
+  # 2) One-Class SVM: envelope del nicho realizado (scale=TRUE guarda el
+  #    centrado/escala del entrenamiento y lo reaplica en predict()).
+  ocsvm <- e1071::svm(x = pres_mat, type = "one-classification",
+                      kernel = "radial", nu = nu, gamma = gamma, scale = TRUE)
+
+  # 3) predecir sobre todas las celdas válidas del stack
+  all_vals <- terra::values(env_rast, mat = TRUE)
+  valid    <- which(stats::complete.cases(all_vals))
+  if (length(valid) == 0) stop("environmentally_dissimilar: el stack no tiene celdas válidas.")
+  pred <- predict(ocsvm, all_vals[valid, var_names, drop = FALSE])
+
+  # 4) candidatas = outliers (predict == FALSE -> fuera del envelope = disímiles)
+  cand <- valid[!pred]
+  if (length(cand) == 0) {
+    stop("environmentally_dissimilar: ninguna celda quedó fuera del envelope ",
+         "(probá un nu mayor para ceñir el envelope al núcleo del nicho).")
+  }
+  if (length(cand) < n) {
+    warning(sprintf("sample_environmentally_dissimilar_background: solo %d celdas disímiles (< n = %d).",
+                    length(cand), n))
+  }
+
+  # 5) muestreo uniforme entre las candidatas
+  size <- min(n, length(cand))
+  idx  <- sample(cand, size = size, replace = FALSE)
+  xy   <- terra::xyFromCell(env_rast[[1]], idx)
+
+  pts_df <- as.data.frame(xy)
+  names(pts_df) <- c(lon_col, lat_col)
+  rownames(pts_df) <- NULL
+  pts_df
+}
+
 extract_env_values <- function(points_df,
                                env_rast,
                                lon_col = "decimalLongitude",
@@ -292,6 +360,7 @@ generate_background_points <- function(bp_method = "random",
                                        bp_params = list(),
                                        mask_raster,
                                        occ_df = NULL,
+                                       env_rast = NULL,
                                        lon_col = "decimalLongitude",
                                        lat_col = "decimalLatitude") {
   bp_method <- tolower(bp_method)
@@ -367,10 +436,29 @@ generate_background_points <- function(bp_method = "random",
     ))
   }
   
+  # #53: estrategia (iii) Environmentally Dissimilar. OCSVM sobre el env de las
+  # presencias; PA en las celdas que quedan fuera del envelope del nicho. Requiere
+  # el stack del env_set (env_rast), no solo la máscara de validez.
   if (bp_method == "environmentally_dissimilar") {
-    stop("environmentally_dissimilar BP not implemented yet.")
+    if (is.null(env_rast)) {
+      stop("environmentally_dissimilar: requiere env_rast (stack del env_set).")
+    }
+    if (is.null(occ_df)) {
+      stop("environmentally_dissimilar: requiere occ_df para definir el nicho.")
+    }
+    nu    <- bp_params$nu    %||% 0.1
+    gamma <- bp_params$gamma %||% NULL
+    n     <- bp_params$n     %||% 10000
+    seed  <- bp_params$seed  %||% 42
+    return(sample_environmentally_dissimilar_background(
+      env_rast = env_rast,
+      occ_df   = occ_df,
+      nu = nu, gamma = gamma,
+      n = n, seed = seed,
+      lon_col = lon_col, lat_col = lat_col
+    ))
   }
-  
+
   if (bp_method == "three_step") {
     stop("three_step BP not implemented yet.")
   }
@@ -469,6 +557,7 @@ build_one_sdm_dataset <- function(config_row,
     bp_params = list(n = bp_n, seed = 42),
     mask_raster = valid_mask,
     occ_df = occ_processed,
+    env_rast = env_rast,
     lon_col = lon_col,
     lat_col = lat_col
   ) |>
@@ -574,7 +663,8 @@ make_config_table <- function(species_table,
                               env_sets = c("bioclim"),
                               grid_sizes_km = c(10, 25, 50),
                               bias_weighted_env_sets = character(0),
-                              spatially_constrained_env_sets = character(0)) {
+                              spatially_constrained_env_sets = character(0),
+                              environmentally_dissimilar_env_sets = character(0)) {
   stopifnot(all(c("species", "occ_file") %in% names(species_table)))
 
   none_rows <- species_table |>
@@ -632,7 +722,25 @@ make_config_table <- function(species_table,
     NULL
   }
 
-  configs <- bind_rows(none_rows, grid_rows, bw_rows, sc_rows) |>
+  # #53: background environmentally_dissimilar SOLO con bias_method=none, sobre
+  # los env_sets ecológicos indicados. Se compara contra el background aleatorio
+  # (none_rows) sobre los mismos env_sets. nu/gamma quedan como defaults en el
+  # sampler (no entran al run_id porque usamos un único nu).
+  ed_rows <- if (length(environmentally_dissimilar_env_sets) > 0) {
+    species_table |>
+      tidyr::crossing(
+        bias_method   = "none",
+        bias_param    = NA_real_,
+        bp_method     = "environmentally_dissimilar",
+        bp_n_strategy = bp_n_strategies,
+        fixed_bp_n    = fixed_bp_n,
+        env_set       = environmentally_dissimilar_env_sets
+      )
+  } else {
+    NULL
+  }
+
+  configs <- bind_rows(none_rows, grid_rows, bw_rows, sc_rows, ed_rows) |>
     mutate(
       bp_n_strategy = as.character(bp_n_strategy),
       bp_n_label = ifelse(

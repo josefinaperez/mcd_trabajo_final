@@ -1,9 +1,11 @@
 # ============================================================
 # File: r/checks/check_background_strategies.R
-# Purpose: Chequea las estrategias de background "spatially_constrained" (#52)
-#          sobre rasters/presencias sintéticas: ningún PA cae dentro del buffer
-#          de exclusión, devuelve n puntos, degrada con gracia si el pool < n,
-#          y coordenadas dentro de la región.
+# Purpose: Chequea las estrategias de background "spatially_constrained" (#52) y
+#          "environmentally_dissimilar" (#53) sobre rasters/presencias sintéticas:
+#          ningún PA cae dentro del buffer de exclusión (#52); las candidatas
+#          disímiles caen en el modo ambiental opuesto al nicho (#53); ambas
+#          devuelven n puntos, degradan con gracia si el pool < n, y dejan las
+#          coordenadas dentro de la región.
 # Ejecutar desde repo root:
 #   Rscript r/checks/check_background_strategies.R
 # ============================================================
@@ -76,3 +78,85 @@ stopifnot(min(apply(d2, 1, min)) / 1000 >= 20)
 ok("dispatcher despacha bp_method='spatially_constrained' al sampler")
 
 cat("\nTodos los chequeos de spatially_constrained (#52) pasaron.\n")
+
+# ============================================================
+# #53 — environmentally_dissimilar (OCSVM)
+# ============================================================
+# Stack ambiental sintético BIMODAL: dos capas con dos modos bien separados
+# (mitad izquierda ~0, mitad derecha ~10). Las presencias viven SOLO en el modo
+# izquierdo, así que el envelope del OCSVM debe rodear la izquierda y las
+# candidatas disímiles (outliers) deben caer en la mitad derecha.
+set.seed(1)
+tmpl <- terra::rast(nrows = 40, ncols = 40, xmin = -66, xmax = -60,
+                    ymin = -36, ymax = -30)
+xy   <- terra::xyFromCell(tmpl, seq_len(terra::ncell(tmpl)))
+left <- xy[, 1] < -63
+nc   <- terra::ncell(tmpl)
+r1 <- terra::setValues(tmpl, ifelse(left, 0, 10) + rnorm(nc, 0, 0.3)); names(r1) <- "v1"
+r2 <- terra::setValues(tmpl, ifelse(left, 0, 10) + rnorm(nc, 0, 0.3)); names(r2) <- "v2"
+env <- c(r1, r2)
+
+# Presencias repartidas por todo el modo IZQUIERDO.
+occ_ed <- data.frame(
+  decimalLongitude = runif(120, -65.8, -63.3),
+  decimalLatitude  = runif(120, -35.8, -30.2)
+)
+
+bg_ed <- sample_environmentally_dissimilar_background(env, occ_ed, nu = 0.1,
+                                                      n = 150, seed = 1)
+stopifnot(nrow(bg_ed) == 150)
+stopifnot(all(c("decimalLongitude", "decimalLatitude") %in% names(bg_ed)))
+ok("sample_environmentally_dissimilar_background devuelve n puntos con las columnas esperadas")
+
+# Las candidatas disímiles caen en el modo opuesto (mitad derecha, lon > -63).
+# Nota: nu=0.1 etiqueta por construcción ~10-15% de las celdas tipo-nicho como
+# outliers, así que la mayoría (no el 100%) cae en el modo disímil.
+frac_der <- mean(bg_ed$decimalLongitude > -63)
+cat(sprintf("  fracción de PA en el modo disímil (derecha): %.2f\n", frac_der))
+stopifnot(frac_der > 0.7)
+# Aserción fuerte: el env medio del background está mucho más cerca del modo
+# disímil (~10) que del nicho de las presencias (~0).
+bg_env <- terra::extract(env, terra::vect(bg_ed, geom = c("decimalLongitude", "decimalLatitude"),
+                                          crs = "EPSG:4326"))
+cat(sprintf("  env medio del background: v1=%.1f v2=%.1f (presencias ~0)\n",
+            mean(bg_env$v1), mean(bg_env$v2)))
+stopifnot(mean(bg_env$v1) > 5, mean(bg_env$v2) > 5)
+ok("las candidatas son verificablemente disímiles al nicho (modo ambiental opuesto)")
+
+# Coordenadas dentro de la región.
+stopifnot(all(bg_ed$decimalLongitude >= -66 & bg_ed$decimalLongitude <= -60),
+          all(bg_ed$decimalLatitude  >= -36 & bg_ed$decimalLatitude  <= -30))
+ok("coordenadas dentro de la región")
+
+# Degradación elegante: la mitad derecha tiene ~800 celdas; pedir 5000 -> warning
+# y devuelve lo que puede (< n) sin abortar.
+bg_ed_deg <- withCallingHandlers(
+  sample_environmentally_dissimilar_background(env, occ_ed, nu = 0.1, n = 5000, seed = 2),
+  warning = function(w) { cat("  (warning esperado):", conditionMessage(w), "\n"); invokeRestart("muffleWarning") }
+)
+stopifnot(nrow(bg_ed_deg) < 5000, nrow(bg_ed_deg) > 0)
+ok("degradación elegante cuando el pool de celdas disímiles < n")
+
+# Dispatcher: bp_method = "environmentally_dissimilar" llega al sampler con env_rast.
+bg_ed_disp <- generate_background_points(
+  bp_method   = "environmentally_dissimilar",
+  bp_params   = list(n = 120, seed = 3, nu = 0.1),
+  mask_raster = sum(env),
+  occ_df      = occ_ed,
+  env_rast    = env
+)
+stopifnot(nrow(bg_ed_disp) == 120)
+stopifnot(mean(bg_ed_disp$decimalLongitude > -63) > 0.7)
+ok("dispatcher despacha bp_method='environmentally_dissimilar' al sampler (con env_rast)")
+
+# El dispatcher debe abortar si falta env_rast.
+err <- tryCatch(
+  generate_background_points(bp_method = "environmentally_dissimilar",
+                             bp_params = list(n = 10), mask_raster = sum(env),
+                             occ_df = occ_ed, env_rast = NULL),
+  error = function(e) conditionMessage(e)
+)
+stopifnot(grepl("env_rast", err))
+ok("el dispatcher aborta con mensaje claro si falta env_rast")
+
+cat("\nTodos los chequeos de environmentally_dissimilar (#53) pasaron.\n")
