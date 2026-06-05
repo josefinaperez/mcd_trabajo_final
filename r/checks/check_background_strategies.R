@@ -63,4 +63,16 @@ bg_deg <- withCallingHandlers(
 stopifnot(nrow(bg_deg) < 5000, nrow(bg_deg) > 0)
 ok("degradación elegante cuando el pool fuera del buffer < n")
 
+# Dispatcher: bp_method = "spatially_constrained" llega al sampler nuevo.
+bg_disp <- generate_background_points(
+  bp_method = "spatially_constrained",
+  bp_params = list(n = 150, seed = 3, buffer_km = 20),
+  mask_raster = mask_r,
+  occ_df = occ
+)
+stopifnot(nrow(bg_disp) == 150)
+d2 <- terra::distance(to_aea(bg_disp), to_aea(occ))
+stopifnot(min(apply(d2, 1, min)) / 1000 >= 20)
+ok("dispatcher despacha bp_method='spatially_constrained' al sampler")
+
 cat("\nTodos los chequeos de spatially_constrained (#52) pasaron.\n")

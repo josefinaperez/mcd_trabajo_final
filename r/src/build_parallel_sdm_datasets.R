@@ -349,9 +349,22 @@ generate_background_points <- function(bp_method = "random",
     ))
   }
 
-  # placeholders for future methods
+  # #52: estrategia (ii) Spatially Constrained. Buffer de exclusión geográfica
+  # (buffer_km, default 20) alrededor de las presencias; PA fuera del buffer.
   if (bp_method == "spatially_constrained") {
-    stop("spatially_constrained BP not implemented yet.")
+    if (is.null(occ_df)) {
+      stop("spatially_constrained: requiere occ_df para construir el buffer.")
+    }
+    buffer_km <- bp_params$buffer_km %||% 20
+    n    <- bp_params$n %||% 10000
+    seed <- bp_params$seed %||% 42
+    return(sample_spatially_constrained_background(
+      mask_raster = mask_raster,
+      occ_df = occ_df,
+      buffer_km = buffer_km,
+      n = n, seed = seed,
+      lon_col = lon_col, lat_col = lat_col
+    ))
   }
   
   if (bp_method == "environmentally_dissimilar") {
