@@ -153,19 +153,13 @@ sample_weighted_background <- function(mask_raster,
   pts_df
 }
 
-# #52: background "spatially constrained" (Miyaji estrategia ii; Lobo et al.
-# 2010). Impone un buffer de exclusión geográfica de radio buffer_km alrededor
-# de las presencias y muestrea el background FUERA del buffer. El buffer se
-# calcula en AEA (km) y solo recorta la máscara (celdas dentro del buffer -> NA);
-# el muestreo se delega en sample_random_background, heredando su oversampling y
-# degradación elegante.
-sample_spatially_constrained_background <- function(mask_raster,
-                                                    occ_df,
-                                                    buffer_km = 20,
-                                                    n = 10000,
-                                                    seed = 42,
-                                                    lon_col = "decimalLongitude",
-                                                    lat_col = "decimalLatitude") {
+# #52/#54: helper puro — máscara con un buffer de exclusión geográfica de radio
+# buffer_km alrededor de las presencias (celdas dentro del buffer -> NA). El
+# buffer se calcula en AEA (km). Lo reusan sample_spatially_constrained_background
+# (#52) y sample_three_step_background (#54).
+build_exclusion_mask <- function(mask_raster, occ_df, buffer_km = 20,
+                                 lon_col = "decimalLongitude",
+                                 lat_col = "decimalLatitude") {
   aea <- "+proj=aea +lat_1=-5 +lat_2=-42 +lat_0=-32 +lon_0=-60 +datum=WGS84 +units=m +no_defs"
 
   occ_v   <- terra::vect(occ_df[, c(lon_col, lat_col)],
@@ -174,7 +168,20 @@ sample_spatially_constrained_background <- function(mask_raster,
   buf_aea <- terra::buffer(occ_aea, width = buffer_km * 1000)        # metros
   buf     <- terra::aggregate(terra::project(buf_aea, terra::crs(mask_raster)))
 
-  mask_excl <- terra::mask(mask_raster, buf, inverse = TRUE, updatevalue = NA)
+  terra::mask(mask_raster, buf, inverse = TRUE, updatevalue = NA)
+}
+
+# #52: background "spatially constrained" (Miyaji estrategia ii; Lobo et al.
+# 2010). Buffer de exclusión geográfica (build_exclusion_mask) + muestreo
+# aleatorio FUERA del buffer (hereda oversampling y degradación elegante).
+sample_spatially_constrained_background <- function(mask_raster,
+                                                    occ_df,
+                                                    buffer_km = 20,
+                                                    n = 10000,
+                                                    seed = 42,
+                                                    lon_col = "decimalLongitude",
+                                                    lat_col = "decimalLatitude") {
+  mask_excl <- build_exclusion_mask(mask_raster, occ_df, buffer_km, lon_col, lat_col)
 
   sample_random_background(
     mask_raster = mask_excl,
