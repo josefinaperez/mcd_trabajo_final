@@ -5,7 +5,8 @@
 #          ningún PA cae dentro del buffer de exclusión (#52); las candidatas
 #          disímiles caen en el modo ambiental opuesto al nicho (#53); ambas
 #          devuelven n puntos, degradan con gracia si el pool < n, y dejan las
-#          coordenadas dentro de la región.
+#          coordenadas dentro de la región; y three_step (#54): PA fuera del
+#          buffer, disímiles y repartidas entre clusters de K-means.
 # Ejecutar desde repo root:
 #   Rscript r/checks/check_background_strategies.R
 # ============================================================
@@ -160,3 +161,80 @@ stopifnot(grepl("env_rast", err))
 ok("el dispatcher aborta con mensaje claro si falta env_rast")
 
 cat("\nTodos los chequeos de environmentally_dissimilar (#53) pasaron.\n")
+
+# ============================================================
+# #54 — three_step (buffer + OCSVM + K-means)
+# ============================================================
+# Stack con TRES zonas por longitud:
+#   - nicho:        lon < -64          (env ~0)   -> presencias acá
+#   - disímil B:    -64 <= lon < -60.3 (env ~10)  -> modo disímil GRANDE
+#   - disímil A:    lon >= -60.3       (env ~20)  -> modo disímil CHICO
+# El pool candidato (fuera del buffer ∩ outliers OCSVM) = B ∪ A. Con k=2 el
+# K-means separa A de B; la asignación uniforme ~n/k debe darle a A (área chica)
+# MUCHA más representación que su fracción de área (eso es el aporte del paso 3).
+set.seed(1)
+tmpl3 <- terra::rast(nrows = 60, ncols = 60, xmin = -66, xmax = -60,
+                     ymin = -36, ymax = -30)
+xy3   <- terra::xyFromCell(tmpl3, seq_len(terra::ncell(tmpl3)))
+zone  <- ifelse(xy3[, 1] < -64, 0,
+         ifelse(xy3[, 1] < -60.3, 10, 20))      # nicho / B / A
+nc3 <- terra::ncell(tmpl3)
+w1 <- terra::setValues(tmpl3, zone + rnorm(nc3, 0, 0.3)); names(w1) <- "v1"
+w2 <- terra::setValues(tmpl3, zone + rnorm(nc3, 0, 0.3)); names(w2) <- "v2"
+env3 <- c(w1, w2)
+
+occ3 <- data.frame(
+  decimalLongitude = runif(120, -65.8, -64.3),  # presencias en el nicho
+  decimalLatitude  = runif(120, -35.8, -30.2)
+)
+
+bg3 <- sample_three_step_background(env3, occ3, buffer_km = 20, nu = 0.1,
+                                    k = 2, n = 200, seed = 1)
+
+stopifnot(nrow(bg3) == 200)
+stopifnot(all(c("decimalLongitude", "decimalLatitude") %in% names(bg3)))
+ok("sample_three_step_background devuelve n puntos con las columnas esperadas")
+
+# (1) Disímiles: env medio del background lejos del nicho (~0).
+bg3_env <- terra::extract(env3, terra::vect(bg3, geom = c("decimalLongitude", "decimalLatitude"),
+                                            crs = "EPSG:4326"))
+cat(sprintf("  env medio del background: v1=%.1f (presencias ~0)\n", mean(bg3_env$v1)))
+stopifnot(mean(bg3_env$v1) > 5)
+ok("PA ambientalmente disímiles al nicho")
+
+# (2) Fuera del buffer: distancia AEA de cada PA a la presencia más cercana >= buffer_km.
+to_aea3 <- function(df) terra::project(
+  terra::vect(df[, c("decimalLongitude", "decimalLatitude")],
+              geom = c("decimalLongitude", "decimalLatitude"), crs = "EPSG:4326"), AEA)
+dd <- terra::distance(to_aea3(bg3), to_aea3(occ3))
+stopifnot(min(apply(dd, 1, min)) / 1000 >= 20)
+ok("ningún PA cae dentro del buffer de exclusión")
+
+# (3) Reparto entre clusters: el modo disímil CHICO (A, lon >= -60.3, ~5% del
+# área candidata) recibe una fracción de PA muy superior a su área (cobertura
+# uniforme de K-means; un muestreo proporcional lo dejaría casi vacío).
+frac_A <- mean(bg3$decimalLongitude >= -60.3)
+cat(sprintf("  fracción de PA en el modo disímil chico (A): %.2f\n", frac_A))
+stopifnot(frac_A > 0.3)
+ok("K-means reparte el background entre clusters (cobertura uniforme del espacio disímil)")
+
+# (4) Degradación elegante: pedir más que el pool -> warning y < n.
+bg3_deg <- withCallingHandlers(
+  sample_three_step_background(env3, occ3, buffer_km = 20, nu = 0.1, k = 2, n = 100000, seed = 2),
+  warning = function(w) { cat("  (warning esperado):", conditionMessage(w), "\n"); invokeRestart("muffleWarning") }
+)
+stopifnot(nrow(bg3_deg) < 100000, nrow(bg3_deg) > 0)
+ok("degradación elegante cuando el pool < n")
+
+# (5) Dispatcher: bp_method = "three_step" llega al sampler con env_rast.
+bg3_disp <- generate_background_points(
+  bp_method   = "three_step",
+  bp_params   = list(n = 120, seed = 3, buffer_km = 20, nu = 0.1, k = 2),
+  mask_raster = sum(env3),
+  occ_df      = occ3,
+  env_rast    = env3
+)
+stopifnot(nrow(bg3_disp) == 120)
+ok("dispatcher despacha bp_method='three_step' al sampler (con env_rast)")
+
+cat("\nTodos los chequeos de three_step (#54) pasaron.\n")

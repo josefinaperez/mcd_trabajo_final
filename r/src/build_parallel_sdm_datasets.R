@@ -153,19 +153,13 @@ sample_weighted_background <- function(mask_raster,
   pts_df
 }
 
-# #52: background "spatially constrained" (Miyaji estrategia ii; Lobo et al.
-# 2010). Impone un buffer de exclusión geográfica de radio buffer_km alrededor
-# de las presencias y muestrea el background FUERA del buffer. El buffer se
-# calcula en AEA (km) y solo recorta la máscara (celdas dentro del buffer -> NA);
-# el muestreo se delega en sample_random_background, heredando su oversampling y
-# degradación elegante.
-sample_spatially_constrained_background <- function(mask_raster,
-                                                    occ_df,
-                                                    buffer_km = 20,
-                                                    n = 10000,
-                                                    seed = 42,
-                                                    lon_col = "decimalLongitude",
-                                                    lat_col = "decimalLatitude") {
+# #52/#54: helper puro — máscara con un buffer de exclusión geográfica de radio
+# buffer_km alrededor de las presencias (celdas dentro del buffer -> NA). El
+# buffer se calcula en AEA (km). Lo reusan sample_spatially_constrained_background
+# (#52) y sample_three_step_background (#54).
+build_exclusion_mask <- function(mask_raster, occ_df, buffer_km = 20,
+                                 lon_col = "decimalLongitude",
+                                 lat_col = "decimalLatitude") {
   aea <- "+proj=aea +lat_1=-5 +lat_2=-42 +lat_0=-32 +lon_0=-60 +datum=WGS84 +units=m +no_defs"
 
   occ_v   <- terra::vect(occ_df[, c(lon_col, lat_col)],
@@ -174,7 +168,20 @@ sample_spatially_constrained_background <- function(mask_raster,
   buf_aea <- terra::buffer(occ_aea, width = buffer_km * 1000)        # metros
   buf     <- terra::aggregate(terra::project(buf_aea, terra::crs(mask_raster)))
 
-  mask_excl <- terra::mask(mask_raster, buf, inverse = TRUE, updatevalue = NA)
+  terra::mask(mask_raster, buf, inverse = TRUE, updatevalue = NA)
+}
+
+# #52: background "spatially constrained" (Miyaji estrategia ii; Lobo et al.
+# 2010). Buffer de exclusión geográfica (build_exclusion_mask) + muestreo
+# aleatorio FUERA del buffer (hereda oversampling y degradación elegante).
+sample_spatially_constrained_background <- function(mask_raster,
+                                                    occ_df,
+                                                    buffer_km = 20,
+                                                    n = 10000,
+                                                    seed = 42,
+                                                    lon_col = "decimalLongitude",
+                                                    lat_col = "decimalLatitude") {
+  mask_excl <- build_exclusion_mask(mask_raster, occ_df, buffer_km, lon_col, lat_col)
 
   sample_random_background(
     mask_raster = mask_excl,
@@ -183,54 +190,58 @@ sample_spatially_constrained_background <- function(mask_raster,
   )
 }
 
-# #53: background "environmentally dissimilar" (Miyaji estrategia iii; Chefaoui &
-# Lobo 2008). Selecciona PA de zonas ambientalmente DISTINTAS al nicho realizado
-# de la especie, forzando al modelo a discriminar sobre gradientes ambientales
-# claros. El envelope del nicho se define con un One-Class SVM (Schölkopf et al.
-# 2001) entrenado sobre el env de las presencias; las celdas que el OCSVM
-# clasifica como outlier (fuera del envelope) son las candidatas disímiles, de
-# donde se muestrea uniformemente. nu es la cota superior de la fracción de
+# #53/#54: helper puro — One-Class SVM (Schölkopf et al. 2001) sobre el env de
+# las presencias; devuelve los ÍNDICES DE CELDA outlier (fuera del envelope del
+# nicho = ambientalmente disímiles). nu es la cota superior de la fracción de
 # presencias rechazadas: nu chico (0.1) = envelope permisivo (casi todas las
 # presencias adentro), de modo que solo se etiquetan como disímiles las celdas
-# claramente fuera del nicho y no se contamina el fondo con hábitat adecuado.
-sample_environmentally_dissimilar_background <- function(env_rast, occ_df,
-                                                         nu = 0.1, gamma = NULL,
-                                                         n = 10000, seed = 42,
-                                                         lon_col = "decimalLongitude",
-                                                         lat_col = "decimalLatitude") {
+# claramente fuera del nicho. Lo reusan sample_environmentally_dissimilar_background
+# (#53) y sample_three_step_background (#54). scale=TRUE guarda el centrado/escala
+# del entrenamiento y lo reaplica en predict().
+ocsvm_dissimilar_cells <- function(env_rast, occ_df,
+                                   nu = 0.1, gamma = NULL,
+                                   lon_col = "decimalLongitude",
+                                   lat_col = "decimalLatitude") {
   if (!requireNamespace("e1071", quietly = TRUE)) {
     stop("environmentally_dissimilar: falta el paquete 'e1071' (OCSVM). ",
          "Instalar con install.packages('e1071').")
   }
-  set.seed(seed)
-
   var_names <- names(env_rast)
 
-  # 1) env en las presencias -> matriz sin NA (define el envelope del nicho)
-  occ_v   <- terra::vect(occ_df[, c(lon_col, lat_col)],
-                         geom = c(lon_col, lat_col), crs = "EPSG:4326")
-  pres    <- terra::extract(env_rast, occ_v)
-  pres    <- pres[, var_names, drop = FALSE]
-  pres    <- pres[stats::complete.cases(pres), , drop = FALSE]
+  # env en las presencias -> matriz sin NA (define el envelope del nicho)
+  occ_v <- terra::vect(occ_df[, c(lon_col, lat_col)],
+                       geom = c(lon_col, lat_col), crs = "EPSG:4326")
+  pres  <- terra::extract(env_rast, occ_v)
+  pres  <- pres[, var_names, drop = FALSE]
+  pres  <- pres[stats::complete.cases(pres), , drop = FALSE]
   if (nrow(pres) < 2) {
     stop("environmentally_dissimilar: muy pocas presencias con env completo para entrenar el OCSVM.")
   }
   pres_mat <- as.matrix(pres)
   if (is.null(gamma)) gamma <- 1 / ncol(pres_mat)   # default RBF sobre datos escalados
 
-  # 2) One-Class SVM: envelope del nicho realizado (scale=TRUE guarda el
-  #    centrado/escala del entrenamiento y lo reaplica en predict()).
   ocsvm <- e1071::svm(x = pres_mat, type = "one-classification",
                       kernel = "radial", nu = nu, gamma = gamma, scale = TRUE)
 
-  # 3) predecir sobre todas las celdas válidas del stack
   all_vals <- terra::values(env_rast, mat = TRUE)
   valid    <- which(stats::complete.cases(all_vals))
   if (length(valid) == 0) stop("environmentally_dissimilar: el stack no tiene celdas válidas.")
   pred <- predict(ocsvm, all_vals[valid, var_names, drop = FALSE])
 
-  # 4) candidatas = outliers (predict == FALSE -> fuera del envelope = disímiles)
-  cand <- valid[!pred]
+  valid[!pred]   # outliers = fuera del envelope = disímiles
+}
+
+# #53: background "environmentally dissimilar" (Miyaji estrategia iii; Chefaoui &
+# Lobo 2008). Muestrea uniformemente entre las celdas disímiles (outliers del
+# OCSVM, ocsvm_dissimilar_cells).
+sample_environmentally_dissimilar_background <- function(env_rast, occ_df,
+                                                         nu = 0.1, gamma = NULL,
+                                                         n = 10000, seed = 42,
+                                                         lon_col = "decimalLongitude",
+                                                         lat_col = "decimalLatitude") {
+  set.seed(seed)
+  cand <- ocsvm_dissimilar_cells(env_rast, occ_df, nu = nu, gamma = gamma,
+                                 lon_col = lon_col, lat_col = lat_col)
   if (length(cand) == 0) {
     stop("environmentally_dissimilar: ninguna celda quedó fuera del envelope ",
          "(probá un nu mayor para ceñir el envelope al núcleo del nicho).")
@@ -239,12 +250,83 @@ sample_environmentally_dissimilar_background <- function(env_rast, occ_df,
     warning(sprintf("sample_environmentally_dissimilar_background: solo %d celdas disímiles (< n = %d).",
                     length(cand), n))
   }
-
-  # 5) muestreo uniforme entre las candidatas
   size <- min(n, length(cand))
   idx  <- sample(cand, size = size, replace = FALSE)
   xy   <- terra::xyFromCell(env_rast[[1]], idx)
 
+  pts_df <- as.data.frame(xy)
+  names(pts_df) <- c(lon_col, lat_col)
+  rownames(pts_df) <- NULL
+  pts_df
+}
+
+# #54: reparte `size` muestras entre los clusters de K-means de la forma más
+# UNIFORME posible (round-robin: cada ronda suma 1 a cada cluster con cupo),
+# capando por el tamaño de cada cluster y redistribuyendo el déficit a los que
+# todavía tienen celdas. Devuelve los índices de celda muestreados.
+allocate_uniform_per_cluster <- function(cells, clusters, size) {
+  ids   <- sort(unique(clusters))
+  by_cl <- lapply(ids, function(c) cells[clusters == c])
+  avail <- vapply(by_cl, length, integer(1))
+  quota <- integer(length(ids))
+
+  remaining <- size
+  repeat {
+    open <- which(quota < avail)
+    if (remaining <= 0L || length(open) == 0L) break
+    take <- min(remaining, length(open))
+    quota[open[seq_len(take)]] <- quota[open[seq_len(take)]] + 1L
+    remaining <- remaining - take
+  }
+
+  # muestreo dentro de cada cluster (guarda contra el bug de sample() con length-1)
+  safe_sample <- function(x, q) if (q <= 0L) integer(0) else if (length(x) == 1L) x else sample(x, q)
+  unlist(Map(safe_sample, by_cl, quota), use.names = FALSE)
+}
+
+# #54: estrategia (iv) Three-Step (Senay, Worner & Ikeda 2013). Compone el buffer
+# espacial (#52) + el envelope OCSVM (#53) + K-means: el pool candidato es
+# (fuera del buffer) ∩ (outliers OCSVM); K-means estratifica ese pool en el
+# espacio ambiental y se muestrea ~n/k por cluster (cobertura uniforme del
+# espacio disímil → menos redundancia/autocorrelación del background).
+sample_three_step_background <- function(env_rast, occ_df,
+                                         buffer_km = 20, nu = 0.1, gamma = NULL,
+                                         k = 10, n = 10000, seed = 42,
+                                         lon_col = "decimalLongitude",
+                                         lat_col = "decimalLatitude") {
+  set.seed(seed)
+  var_names <- names(env_rast)
+
+  # 1) espacial: celdas fuera del buffer de exclusión
+  mask_excl <- build_exclusion_mask(env_rast[[1]], occ_df, buffer_km, lon_col, lat_col)
+  outside   <- which(!is.na(terra::values(mask_excl, mat = FALSE)))
+
+  # 2) ambiental: celdas outlier del OCSVM
+  outliers <- ocsvm_dissimilar_cells(env_rast, occ_df, nu = nu, gamma = gamma,
+                                     lon_col = lon_col, lat_col = lat_col)
+
+  # 3) intersección
+  cand <- intersect(outside, outliers)
+  if (length(cand) == 0) {
+    stop("three_step: pool vacío (fuera del buffer ∩ disímiles). ",
+         "Probá un buffer menor o un nu mayor.")
+  }
+  if (length(cand) < n) {
+    warning(sprintf("sample_three_step_background: solo %d celdas en el pool (< n = %d).",
+                    length(cand), n))
+  }
+  size <- min(n, length(cand))
+
+  # 4) clustering en el espacio ambiental escalado del pool
+  env_mat <- terra::values(env_rast, mat = TRUE)[cand, var_names, drop = FALSE]
+  env_sc  <- scale(env_mat)
+  env_sc[is.na(env_sc)] <- 0          # columnas de varianza cero -> 0 (no aportan)
+  k_eff <- max(1L, min(as.integer(k), length(cand)))
+  km    <- stats::kmeans(env_sc, centers = k_eff)
+
+  idx <- allocate_uniform_per_cluster(cand, km$cluster, size)
+
+  xy  <- terra::xyFromCell(env_rast[[1]], idx)
   pts_df <- as.data.frame(xy)
   names(pts_df) <- c(lon_col, lat_col)
   rownames(pts_df) <- NULL
@@ -459,8 +541,27 @@ generate_background_points <- function(bp_method = "random",
     ))
   }
 
+  # #54: estrategia (iv) Three-Step. Buffer (#52) + OCSVM (#53) + K-means.
+  # Requiere el stack del env_set (env_rast) y las presencias (occ_df).
   if (bp_method == "three_step") {
-    stop("three_step BP not implemented yet.")
+    if (is.null(env_rast)) {
+      stop("three_step: requiere env_rast (stack del env_set).")
+    }
+    if (is.null(occ_df)) {
+      stop("three_step: requiere occ_df para el buffer y el OCSVM.")
+    }
+    buffer_km <- bp_params$buffer_km %||% 20
+    nu        <- bp_params$nu        %||% 0.1
+    gamma     <- bp_params$gamma     %||% NULL
+    k         <- bp_params$k         %||% 10
+    n         <- bp_params$n         %||% 10000
+    seed      <- bp_params$seed      %||% 42
+    return(sample_three_step_background(
+      env_rast = env_rast, occ_df = occ_df,
+      buffer_km = buffer_km, nu = nu, gamma = gamma, k = k,
+      n = n, seed = seed,
+      lon_col = lon_col, lat_col = lat_col
+    ))
   }
   
   stop("Unknown BP generation method: ", bp_method)
@@ -664,7 +765,8 @@ make_config_table <- function(species_table,
                               grid_sizes_km = c(10, 25, 50),
                               bias_weighted_env_sets = character(0),
                               spatially_constrained_env_sets = character(0),
-                              environmentally_dissimilar_env_sets = character(0)) {
+                              environmentally_dissimilar_env_sets = character(0),
+                              three_step_env_sets = character(0)) {
   stopifnot(all(c("species", "occ_file") %in% names(species_table)))
 
   none_rows <- species_table |>
@@ -740,7 +842,24 @@ make_config_table <- function(species_table,
     NULL
   }
 
-  configs <- bind_rows(none_rows, grid_rows, bw_rows, sc_rows, ed_rows) |>
+  # #54: background three_step SOLO con bias_method=none, sobre los env_sets
+  # ecológicos indicados. Compone buffer+OCSVM+K-means; se compara contra el
+  # background aleatorio (none_rows) sobre los mismos env_sets.
+  ts_rows <- if (length(three_step_env_sets) > 0) {
+    species_table |>
+      tidyr::crossing(
+        bias_method   = "none",
+        bias_param    = NA_real_,
+        bp_method     = "three_step",
+        bp_n_strategy = bp_n_strategies,
+        fixed_bp_n    = fixed_bp_n,
+        env_set       = three_step_env_sets
+      )
+  } else {
+    NULL
+  }
+
+  configs <- bind_rows(none_rows, grid_rows, bw_rows, sc_rows, ed_rows, ts_rows) |>
     mutate(
       bp_n_strategy = as.character(bp_n_strategy),
       bp_n_label = ifelse(

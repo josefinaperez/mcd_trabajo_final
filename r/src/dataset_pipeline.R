@@ -252,7 +252,10 @@ config_table <- make_config_table(
   spatially_constrained_env_sets = eco_env_sets,
   # #53: environmentally_dissimilar (OCSVM) tampoco depende de capas antrópicas
   # -> siempre sobre los env_sets ecológicos.
-  environmentally_dissimilar_env_sets = eco_env_sets
+  environmentally_dissimilar_env_sets = eco_env_sets,
+  # #54: three_step compone buffer+OCSVM+K-means -> siempre sobre los env_sets
+  # ecológicos.
+  three_step_env_sets = eco_env_sets
 )
 
 manifest <- build_parallel_sdm_datasets(
