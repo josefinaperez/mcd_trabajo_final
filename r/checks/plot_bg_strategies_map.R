@@ -11,9 +11,12 @@
 suppressPackageStartupMessages({ library(sf); library(readr); library(dplyr) })
 
 ENV_SET   <- "bioclim_veg_reduced"   # env_set común a todas las estrategias
-BP_N      <- "fixed"                  # fixed (10000) para ver bien el patrón espacial
+# bp_n_strategy desde la línea de comandos (default "fixed"). Acepta "fixed" o
+# "match_presence".
+.args     <- commandArgs(trailingOnly = TRUE)
+BP_N      <- if (length(.args) >= 1) .args[1] else "fixed"
 OUT_DIR   <- "data/outputs/sdm_parallel/diagnostics"
-OUT_PNG   <- file.path(OUT_DIR, "bg_strategies_map.png")
+OUT_PNG   <- file.path(OUT_DIR, paste0("bg_strategies_map_", BP_N, ".png"))
 dir.create(OUT_DIR, showWarnings = FALSE, recursive = TRUE)
 
 # Orden y etiquetas legibles de las estrategias.
