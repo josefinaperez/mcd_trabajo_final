@@ -190,54 +190,58 @@ sample_spatially_constrained_background <- function(mask_raster,
   )
 }
 
-# #53: background "environmentally dissimilar" (Miyaji estrategia iii; Chefaoui &
-# Lobo 2008). Selecciona PA de zonas ambientalmente DISTINTAS al nicho realizado
-# de la especie, forzando al modelo a discriminar sobre gradientes ambientales
-# claros. El envelope del nicho se define con un One-Class SVM (Schölkopf et al.
-# 2001) entrenado sobre el env de las presencias; las celdas que el OCSVM
-# clasifica como outlier (fuera del envelope) son las candidatas disímiles, de
-# donde se muestrea uniformemente. nu es la cota superior de la fracción de
+# #53/#54: helper puro — One-Class SVM (Schölkopf et al. 2001) sobre el env de
+# las presencias; devuelve los ÍNDICES DE CELDA outlier (fuera del envelope del
+# nicho = ambientalmente disímiles). nu es la cota superior de la fracción de
 # presencias rechazadas: nu chico (0.1) = envelope permisivo (casi todas las
 # presencias adentro), de modo que solo se etiquetan como disímiles las celdas
-# claramente fuera del nicho y no se contamina el fondo con hábitat adecuado.
-sample_environmentally_dissimilar_background <- function(env_rast, occ_df,
-                                                         nu = 0.1, gamma = NULL,
-                                                         n = 10000, seed = 42,
-                                                         lon_col = "decimalLongitude",
-                                                         lat_col = "decimalLatitude") {
+# claramente fuera del nicho. Lo reusan sample_environmentally_dissimilar_background
+# (#53) y sample_three_step_background (#54). scale=TRUE guarda el centrado/escala
+# del entrenamiento y lo reaplica en predict().
+ocsvm_dissimilar_cells <- function(env_rast, occ_df,
+                                   nu = 0.1, gamma = NULL,
+                                   lon_col = "decimalLongitude",
+                                   lat_col = "decimalLatitude") {
   if (!requireNamespace("e1071", quietly = TRUE)) {
     stop("environmentally_dissimilar: falta el paquete 'e1071' (OCSVM). ",
          "Instalar con install.packages('e1071').")
   }
-  set.seed(seed)
-
   var_names <- names(env_rast)
 
-  # 1) env en las presencias -> matriz sin NA (define el envelope del nicho)
-  occ_v   <- terra::vect(occ_df[, c(lon_col, lat_col)],
-                         geom = c(lon_col, lat_col), crs = "EPSG:4326")
-  pres    <- terra::extract(env_rast, occ_v)
-  pres    <- pres[, var_names, drop = FALSE]
-  pres    <- pres[stats::complete.cases(pres), , drop = FALSE]
+  # env en las presencias -> matriz sin NA (define el envelope del nicho)
+  occ_v <- terra::vect(occ_df[, c(lon_col, lat_col)],
+                       geom = c(lon_col, lat_col), crs = "EPSG:4326")
+  pres  <- terra::extract(env_rast, occ_v)
+  pres  <- pres[, var_names, drop = FALSE]
+  pres  <- pres[stats::complete.cases(pres), , drop = FALSE]
   if (nrow(pres) < 2) {
     stop("environmentally_dissimilar: muy pocas presencias con env completo para entrenar el OCSVM.")
   }
   pres_mat <- as.matrix(pres)
   if (is.null(gamma)) gamma <- 1 / ncol(pres_mat)   # default RBF sobre datos escalados
 
-  # 2) One-Class SVM: envelope del nicho realizado (scale=TRUE guarda el
-  #    centrado/escala del entrenamiento y lo reaplica en predict()).
   ocsvm <- e1071::svm(x = pres_mat, type = "one-classification",
                       kernel = "radial", nu = nu, gamma = gamma, scale = TRUE)
 
-  # 3) predecir sobre todas las celdas válidas del stack
   all_vals <- terra::values(env_rast, mat = TRUE)
   valid    <- which(stats::complete.cases(all_vals))
   if (length(valid) == 0) stop("environmentally_dissimilar: el stack no tiene celdas válidas.")
   pred <- predict(ocsvm, all_vals[valid, var_names, drop = FALSE])
 
-  # 4) candidatas = outliers (predict == FALSE -> fuera del envelope = disímiles)
-  cand <- valid[!pred]
+  valid[!pred]   # outliers = fuera del envelope = disímiles
+}
+
+# #53: background "environmentally dissimilar" (Miyaji estrategia iii; Chefaoui &
+# Lobo 2008). Muestrea uniformemente entre las celdas disímiles (outliers del
+# OCSVM, ocsvm_dissimilar_cells).
+sample_environmentally_dissimilar_background <- function(env_rast, occ_df,
+                                                         nu = 0.1, gamma = NULL,
+                                                         n = 10000, seed = 42,
+                                                         lon_col = "decimalLongitude",
+                                                         lat_col = "decimalLatitude") {
+  set.seed(seed)
+  cand <- ocsvm_dissimilar_cells(env_rast, occ_df, nu = nu, gamma = gamma,
+                                 lon_col = lon_col, lat_col = lat_col)
   if (length(cand) == 0) {
     stop("environmentally_dissimilar: ninguna celda quedó fuera del envelope ",
          "(probá un nu mayor para ceñir el envelope al núcleo del nicho).")
@@ -246,8 +250,6 @@ sample_environmentally_dissimilar_background <- function(env_rast, occ_df,
     warning(sprintf("sample_environmentally_dissimilar_background: solo %d celdas disímiles (< n = %d).",
                     length(cand), n))
   }
-
-  # 5) muestreo uniforme entre las candidatas
   size <- min(n, length(cand))
   idx  <- sample(cand, size = size, replace = FALSE)
   xy   <- terra::xyFromCell(env_rast[[1]], idx)
