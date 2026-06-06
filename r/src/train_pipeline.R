@@ -13,6 +13,7 @@
 source("r/src/train_models.R")
 source("r/src/evaluate_model.R")
 source("r/src/spatial_cv.R")
+source("r/src/tune_models.R")   # hp_row_to_list (#8)
 
 suppressPackageStartupMessages({
   library(readr)
@@ -32,7 +33,6 @@ ARGENTINA_SHP  <- "data/shp/argentina/argentina.shp"
 
 SEED           <- 42
 P_TRAIN        <- 0.7
-REGMULT        <- 1
 K_FOLDS        <- 5L
 BLOCK_SIZE_CAP_KM <- 300L
 
@@ -57,6 +57,28 @@ ALGO_BP_STRATEGY <- c(
 FORCE <- tolower(Sys.getenv("SDM_FORCE", "")) %in% c("1", "true", "t", "yes", "y")
 
 dir.create(MODELS_ROOT, recursive = TRUE, showWarnings = FALSE)
+
+# #8: HP tuneados por (run × algo). Si falta best_hp.csv o la fila, se cae a
+# ALGO_DEFAULTS (hp = list()). El tuneo REEMPLAZA a los defaults: no hay rama
+# "default" paralela.
+best_hp_path <- file.path(MODELS_ROOT, "best_hp.csv")
+tuned_hp <- if (file.exists(best_hp_path)) {
+  read_csv(best_hp_path, show_col_types = FALSE)
+} else {
+  message("Aviso: no se encontró best_hp.csv; se usan ALGO_DEFAULTS ",
+          "(correr antes r/src/tune_pipeline.R para tunear, #8).")
+  NULL
+}
+
+lookup_hp <- function(run_id, algo) {
+  if (is.null(tuned_hp)) return(list())
+  row <- dplyr::filter(tuned_hp, run_id == !!run_id, algorithm == !!algo)
+  if (nrow(row) == 0) {
+    message("  (sin HP tuneado para ", run_id, " / ", algo, "; ALGO_DEFAULTS)")
+    return(list())
+  }
+  hp_row_to_list(row[1, , drop = FALSE])   # de tune_models.R
+}
 
 # ------------------------------------------------------------
 # 1) Manifest de datasets
@@ -153,7 +175,7 @@ train_one <- function(i, cv_scheme, algo) {
   }
 
   dataset_path <- file.path(DATASETS_ROOT, run_id, "sdm_dataset_model_ready.csv")
-  hp           <- if (algo == "maxnet") list(regmult = REGMULT) else list()
+  hp           <- lookup_hp(run_id, algo)   # #8: HP tuneado o ALGO_DEFAULTS
 
   message("[", i, "/", nrow(datasets_manifest), "] ", run_id,
           "  (", cv_scheme, " / ", algo, ")")
