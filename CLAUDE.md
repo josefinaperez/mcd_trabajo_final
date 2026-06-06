@@ -30,6 +30,14 @@ source("r/src/env_selection_pipeline.R")
 #    under spatial-block CV; persist per-run artifacts + summary.
 source("r/src/train_pipeline.R")
 
+# 3b) (Opcional, #8) Tuneo de hiperparámetros: elige best_hp por (run × algo)
+#     con CV interno espacial K=3 (TSS) y escribe best_hp.csv, que train_pipeline
+#     consume en la siguiente corrida. Rscript directo (guarda con sys.nframe()).
+#     Correr DESPUÉS de un train_pipeline inicial (reusa spatial_cv_config.csv) y
+#     ANTES de la corrida de reporte (SDM_FORCE=1 train_pipeline para re-entrenar
+#     con los HP tuneados).
+#     Rscript r/src/tune_pipeline.R
+
 # 4) Prediction maps, XAI (SHAP/PDP/LIME) and residual spatial-autocorrelation
 #    diagnostics. NOTE: these must be run with `Rscript r/src/<file>.R` directly
 #    — they branch on sys.nframe() and skip the main block when source()'d.
@@ -83,6 +91,8 @@ Two-layer split, **algorithm-agnostic**:
 - `r/src/evaluate_model.R` — metric computation, algorithm-agnostic: dual threshold-based metrics (threshold at max TSS → `tss`, `fnr`, sens/spec) plus the continuous **Boyce index** (Hirzel et al. 2006). No fixed 70/30 holdout — evaluation is the spatial-block folds.
 - `r/src/spatial_cv.R` — builds the spatial blocks. `train_pipeline.R` calibrates the block size **once per run** from the spatial autocorrelation range of the BIO layers (capped at `BLOCK_SIZE_CAP_KM = 300`), persisting `autocor_range_table.csv` and `spatial_cv_config.csv`.
 - `r/src/train_pipeline.R` — orchestrator. Reads the dataset manifest and loops over `cv_scheme × algo × run` (`CV_SCHEMES = c("spatial_block")`, `ALGOS = c("maxnet", "ranger", "xgboost")`, `K_FOLDS = 5`). Spatial folds are cached per `run_id` (they depend only on the dataset, not the algorithm). Writes a joined `manifest.csv` (dataset manifest + metrics) and summary/comparison outputs into `data/outputs/sdm_models/`.
+
+**Hyperparameter tuning** (issue #8): `tune_pipeline.R` (+ pure functions in `tune_models.R`, tested by `r/checks/check_tune_models.R`) elige un único conjunto de HP por `(run_id × algo)` mediante **CV interno espacial K=3** (métrica TSS, umbral de Youden sobre el pool de folds) reusando `fit_model` / `compute_dual_metrics`. Grillas "Standard" ~12 combos/algo (maxnet `regmult × classes`; ranger `num.trees × mtry × min.node.size`, `mtry` relativo a `p`; xgboost `max_depth × learning_rate × nrounds`). Escribe `best_hp.csv` (una fila por run×algo, columnas no-aplicables en `NA`) que `train_pipeline.R` lee para pasar los HP a `fit_model` — **el tuneo reemplaza a los defaults**; si falta la fila se cae a `ALGO_DEFAULTS`. Reusa el block size global vía `spatial_cv_config.csv`, así que corre tras un `train_pipeline.R` inicial; la corrida de reporte necesita `SDM_FORCE=1` (skip content-blind). Mismas convenciones `Rscript`-directo / `sys.nframe()` / skip-if-exists+`SDM_FORCE`. La grilla completa por run×algo se persiste en `<run_id>/tune/<algo>_scores.csv` (evidencia de búsqueda).
 
 Prediction maps and explainability are separate stages: `predict_pipeline.R` (+ `predict_distribution_map.R`) and `xai_pipeline.R` (+ `xai_shap.R` / `xai_pdp.R` / `xai_lime.R`, dispatched via `xai_predict.R`). Both **must be run with `Rscript` directly** (they guard their main block on `sys.nframe()`).
 
