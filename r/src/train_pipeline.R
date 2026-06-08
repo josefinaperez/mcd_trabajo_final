@@ -274,7 +274,7 @@ summary_table <- models_manifest |>
                          paste0("BG = ", bp_n),
                          "BG = n presencias")
   ) |>
-  select(run_id, cv_scheme, algorithm, species, env_set, bias_label, bp_label,
+  select(run_id, cv_scheme, algorithm, species, env_set, bias_label, bp_method, bp_label,
          n_train_pres, n_test_pres, n_train_bg, n_test_bg,
          auc_test, threshold_max_tss, sensitivity, specificity,
          tss, fnr, boyce, train_secs) |>
