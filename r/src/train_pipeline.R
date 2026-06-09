@@ -272,13 +272,33 @@ summary_table <- models_manifest |>
                          paste0("grid ", bias_param, "km")),
     bp_label   = if_else(bp_n_strategy == "fixed",
                          paste0("BG = ", bp_n),
-                         "BG = n presencias")
+                         "BG = n presencias"),
+    # bp_group (#59): agrupa los bp_method por tipo de contraste presencia-fondo.
+    # uniform = fondo uniforme en su dominio (geográfico/ambiental); target_group
+    # = fondo ponderado por accesibilidad. El TSS es comparable dentro de un grupo
+    # pero no entre grupos, así que predict_pipeline elige un ganador por bp_group.
+    bp_group   = case_when(
+      bp_method %in% c("random", "spatially_constrained",
+                       "environmentally_dissimilar", "three_step") ~ "uniform",
+      bp_method == "bias_weighted"                                 ~ "target_group",
+      TRUE                                                         ~ NA_character_
+    )
   ) |>
-  select(run_id, cv_scheme, algorithm, species, env_set, bias_label, bp_method, bp_label,
+  select(run_id, cv_scheme, algorithm, species, env_set, bias_label,
+         bp_method, bp_group, bp_label,
          n_train_pres, n_test_pres, n_train_bg, n_test_bg,
          auc_test, threshold_max_tss, sensitivity, specificity,
          tss, fnr, boyce, train_secs) |>
   arrange(cv_scheme, algorithm, desc(tss))
+
+# Mapeo bp_method -> bp_group exhaustivo: si aparece un bp_method nuevo sin
+# clasificar, fallar fuerte en vez de mandarlo a un grupo NA silencioso (#59).
+if (any(is.na(summary_table$bp_group))) {
+  stop("bp_method sin bp_group asignado: ",
+       paste(unique(summary_table$bp_method[is.na(summary_table$bp_group)]),
+             collapse = ", "),
+       ". Actualizar el mapeo bp_group en train_pipeline.R.")
+}
 
 write_csv(summary_table, file.path(MODELS_ROOT, "summary_table.csv"))
 

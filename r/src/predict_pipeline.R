@@ -48,25 +48,28 @@ WINNER_EXCLUDE_REGEX <- "_anthro"
 # ------------------------------------------------------------
 
 select_runs <- function(summary_df, tau_fnr, winner_exclude_regex = NULL) {
-  stopifnot(all(c("run_id", "cv_scheme", "bp_method", "algorithm", "tss", "fnr") %in% names(summary_df)))
+  stopifnot(all(c("run_id", "cv_scheme", "bp_group", "algorithm", "tss", "fnr") %in% names(summary_df)))
 
   out <- summary_df |>
     mutate(passes_filter = fnr <= tau_fnr)
 
   # Ganador cross-algoritmo: argmax TSS sobre todos los (run_id, algorithm)
-  # que pasan el filtro DENTRO de cada (cv_scheme, bp_method) (#57). Se declara
-  # un ganador por estrategia de background porque el TSS no es comparable ENTRE
-  # bp_method (los backgrounds disímiles inflan el contraste) pero sí DENTRO de
-  # uno. La comparación entre ganadores (Boyce como árbitro) es del análisis.
-  # El ganador del grupo puede ser cualquier algoritmo. winner_exclude_regex
-  # (#47) saca de la candidatura a los env_sets de diagnóstico (antrópicos), que
-  # igual quedan como sobrevivientes (passes_filter) pero nunca is_winner.
+  # que pasan el filtro DENTRO de cada (cv_scheme, bp_group) (#59). Se declara
+  # un ganador por GRUPO de background (uniform vs target_group): dentro de
+  # uniform el TSS es comparable (mismo tipo de contraste, fondo uniforme), pero
+  # target_group produce un contraste cualitativamente distinto (fondo ponderado
+  # por accesibilidad), así que es tarea aparte. La comparación entre los 2
+  # ganadores (Boyce como árbitro) es del análisis, no se automatiza. El ganador
+  # del grupo puede ser cualquier algoritmo y cualquier bp_method del grupo.
+  # winner_exclude_regex (#47) saca de la candidatura a los env_sets de
+  # diagnóstico (antrópicos), que igual quedan como sobrevivientes pero nunca
+  # is_winner.
   winner_pool <- out |> filter(passes_filter)
   if (!is.null(winner_exclude_regex)) {
     winner_pool <- winner_pool |> filter(!grepl(winner_exclude_regex, run_id))
   }
   winners <- winner_pool |>
-    group_by(cv_scheme, bp_method) |>
+    group_by(cv_scheme, bp_group) |>
     slice_max(tss, n = 1, with_ties = FALSE) |>
     ungroup() |>
     transmute(run_id, cv_scheme, algorithm, .is_winner_row = TRUE)
@@ -76,7 +79,7 @@ select_runs <- function(summary_df, tau_fnr, winner_exclude_regex = NULL) {
     mutate(
       is_winner   = !is.na(.is_winner_row),
       winner_role = ifelse(is_winner,
-                           paste0("winner_", cv_scheme, "_", bp_method),
+                           paste0("winner_", cv_scheme, "_", bp_group),
                            NA_character_)
     ) |>
     select(-.is_winner_row)
@@ -96,20 +99,21 @@ compute_tau_fnr_robustness <- function(summary_df, tau_fnr_grid, winner_exclude_
   purrr::map_dfr(tau_fnr_grid, function(t) {
     sel <- select_runs(summary_df, t, winner_exclude_regex)
     survivors <- sel |>
-      group_by(cv_scheme, bp_method) |>
+      group_by(cv_scheme, bp_group) |>
       summarise(n_survivors = sum(passes_filter), .groups = "drop")
     sel |>
       filter(is_winner) |>
       transmute(
         tau_fnr          = t,
         cv_scheme,
+        bp_group,
         bp_method,
         winner_run_id    = run_id,
         winner_algorithm = algorithm,
         winner_tss       = tss,
         winner_fnr       = fnr
       ) |>
-      left_join(survivors, by = c("cv_scheme", "bp_method"))
+      left_join(survivors, by = c("cv_scheme", "bp_group"))
   })
 }
 
@@ -228,6 +232,7 @@ main <- function() {
     transmute(
       run_id,
       cv_scheme,
+      bp_group,
       bp_method,
       algorithm,
       winner_role,
