@@ -1,6 +1,9 @@
 ---
-title: "Etapa 0 — Datos de entrada (presencias)"
+title: "`r paste0('Etapa 0 — Datos de entrada (', params$species_label, ')')`"
 output: html_document
+params:
+  species_slug: "polyporaceae"
+  species_label: "Polyporaceae"
 ---
 
 ```{r setup, include=FALSE}
@@ -11,8 +14,12 @@ library(ggplot2)
 library(sf)
 library(knitr)
 
-EDA_ROOT <- "../../data/outputs/occ_eda/polyporaceae"
-PROCESSED <- "../../data/ocurrences/processed/df_polyporaceae.csv"
+# La especie se elige vía params (render con rmarkdown::render(..., params=...)).
+# Por defecto Polyporaceae; para Cyttaria: params=list(species_slug="cyttaria_hariotii",
+# species_label="Cyttaria hariotii").
+EDA_ROOT  <- file.path("../../data/outputs/occ_eda", params$species_slug)
+PROCESSED <- file.path("../../data/ocurrences/processed",
+                       paste0("df_", params$species_slug, ".csv"))
 SHP <- "../../data/shp/argentina/argentina.shp"
 
 argentina <- sf::st_read(SHP, quiet = TRUE)
