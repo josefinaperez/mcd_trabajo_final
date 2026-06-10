@@ -1,0 +1,166 @@
+---
+title: "Etapa 0 — Datos de entrada (presencias)"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, message = FALSE, warning = FALSE)
+library(readr)
+library(dplyr)
+library(ggplot2)
+library(sf)
+library(knitr)
+
+EDA_ROOT <- "../../data/outputs/occ_eda/polyporaceae"
+PROCESSED <- "../../data/ocurrences/processed/df_polyporaceae.csv"
+SHP <- "../../data/shp/argentina/argentina.shp"
+
+argentina <- sf::st_read(SHP, quiet = TRUE)
+
+# Etiquetas legibles para las etapas del embudo (orden del pipeline).
+stage_labels <- c(
+  no_coords          = "Sin coordenadas",
+  year               = "Año anterior a 2010",
+  species            = "Otra especie",
+  outside_argentina  = "Fuera de Argentina",
+  coord_uncertainty  = "Baja precisión",
+  basis_of_record    = "Tipo de registro no válido",
+  coordinate_cleaner = "CoordinateCleaner"
+)
+
+# Agrupamiento de motivos (granular -> categoría) para la leyenda del mapa.
+reason_category <- c(
+  year               = "Temporal / taxonómico",
+  species            = "Temporal / taxonómico",
+  outside_argentina  = "Fuera de Argentina",
+  coord_uncertainty  = "Baja precisión",
+  basis_of_record    = "Tipo de registro",
+  cc_outliers        = "Outlier espacial",
+  cc_centroids       = "Centroide de país",
+  cc_capitals        = "Capital",
+  cc_institutions    = "Institución",
+  cc_duplicates      = "Duplicado",
+  cc_equal           = "Lat = Lon",
+  cc_zeros           = "Coordenada cero"
+)
+```
+
+## Embudo de limpieza
+
+Del total descargado de GBIF se conserva sólo la fracción que supera todos los
+filtros de calidad. La tabla y el gráfico muestran cuántos registros sobreviven
+a cada etapa.
+
+```{r funnel-table}
+funnel <- readr::read_csv(file.path(EDA_ROOT, "cleaning_funnel.csv"),
+                          show_col_types = FALSE) %>%
+  mutate(etapa = stage_labels[stage])
+
+knitr::kable(
+  funnel %>% select(Etapa = etapa, `N entra` = n_in,
+                    `N removido` = n_removed, `N sobrevive` = n_out),
+  caption = sprintf("Embudo de limpieza: %d registros crudos -> %d presencias finales.",
+                    funnel$n_in[1], funnel$n_out[nrow(funnel)])
+)
+```
+
+```{r funnel-plot, fig.width = 8, fig.height = 4.5}
+funnel_ord <- funnel %>%
+  mutate(etapa = factor(etapa, levels = stage_labels[stage]))
+
+ggplot(funnel_ord, aes(x = etapa, y = n_out, group = 1)) +
+  geom_col(aes(y = n_in), fill = "grey85") +
+  geom_col(fill = "steelblue") +
+  geom_text(aes(label = paste0("-", n_removed)),
+            vjust = -0.4, size = 3, colour = "firebrick") +
+  labs(x = NULL, y = "Registros que sobreviven",
+       title = "Supervivientes tras cada filtro (barra gris = entrada, azul = salida)") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 30, hjust = 1))
+```
+
+## Mapa de presencias finales
+
+```{r map-final, fig.width = 6.5, fig.height = 8}
+occ <- readr::read_csv(PROCESSED, show_col_types = FALSE)
+
+ggplot() +
+  geom_sf(data = argentina, fill = "grey97", colour = "grey60") +
+  geom_point(data = occ,
+             aes(x = decimalLongitude, y = decimalLatitude),
+             colour = "steelblue", alpha = 0.5, size = 1) +
+  labs(x = NULL, y = NULL,
+       title = sprintf("Presencias finales (n = %d)", nrow(occ))) +
+  theme_minimal()
+```
+
+## Crudo vs limpio: qué se removió y por qué
+
+Los registros conservados (azul) frente a los descartados, coloreados según el
+motivo de remoción. Hace visible que buena parte del descarte es ruido de
+georreferenciación (centroides, capitales, instituciones, outliers).
+
+```{r map-removed, fig.width = 7, fig.height = 8.5}
+removed <- readr::read_csv(file.path(EDA_ROOT, "removed_points.csv"),
+                           show_col_types = FALSE) %>%
+  filter(!is.na(decimalLongitude), !is.na(decimalLatitude)) %>%
+  mutate(categoria = reason_category[reason],
+         categoria = ifelse(is.na(categoria), reason, categoria))
+
+ggplot() +
+  geom_sf(data = argentina, fill = "grey97", colour = "grey60") +
+  geom_point(data = occ,
+             aes(x = decimalLongitude, y = decimalLatitude),
+             colour = "grey70", alpha = 0.4, size = 0.8) +
+  geom_point(data = removed,
+             aes(x = decimalLongitude, y = decimalLatitude, colour = categoria),
+             alpha = 0.7, size = 1.1) +
+  coord_sf(xlim = c(-75, -52), ylim = c(-56, -20)) +
+  labs(x = NULL, y = NULL, colour = "Motivo de remoción",
+       title = "Conservados (gris) vs removidos (color) por motivo") +
+  theme_minimal()
+```
+
+## Caracterización del dato final
+
+### Distribución temporal
+
+```{r desc-year, fig.width = 8, fig.height = 3.5}
+by_year <- readr::read_csv(file.path(EDA_ROOT, "desc_by_year.csv"),
+                           show_col_types = FALSE)
+ggplot(by_year, aes(x = year, y = n)) +
+  geom_col(fill = "steelblue") +
+  labs(x = "Año", y = "Registros") +
+  theme_minimal()
+```
+
+### Tipo de registro (basisOfRecord)
+
+```{r desc-basis}
+by_basis <- readr::read_csv(file.path(EDA_ROOT, "desc_by_basis.csv"),
+                            show_col_types = FALSE)
+knitr::kable(by_basis, col.names = c("basisOfRecord", "N"))
+```
+
+### Fuentes principales
+
+```{r desc-source}
+by_source <- readr::read_csv(file.path(EDA_ROOT, "desc_by_source.csv"),
+                             show_col_types = FALSE)
+knitr::kable(head(by_source, 15), col.names = c("Fuente / dataset", "N"),
+             caption = "Top 15 fuentes por cantidad de registros.")
+```
+
+### Incertidumbre de las coordenadas
+
+```{r desc-uncertainty, fig.width = 8, fig.height = 3.5}
+unc <- readr::read_csv(file.path(EDA_ROOT, "desc_uncertainty.csv"),
+                       show_col_types = FALSE)
+n_na <- sum(is.na(unc$coordinateUncertaintyInMeters))
+ggplot(unc %>% filter(!is.na(coordinateUncertaintyInMeters)),
+       aes(x = coordinateUncertaintyInMeters / 1000)) +
+  geom_histogram(bins = 30, fill = "steelblue") +
+  labs(x = "Incertidumbre (km)", y = "Registros",
+       caption = sprintf("%d registros sin incertidumbre reportada (no graficados).", n_na)) +
+  theme_minimal()
+```

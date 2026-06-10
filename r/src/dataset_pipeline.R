@@ -81,7 +81,10 @@ for (i in seq_len(nrow(species_config))) {
     scientific_name    = sp,
     max_uncertainty_km = species_config$max_uncertainty_km[i],
     shp_path           = shp_path,
-    tests              = tests_default
+    tests              = tests_default,
+    # Artefactos EDA para Resultados (issue #68): embudo de limpieza,
+    # removidos con motivo y descriptivos del conjunto final.
+    eda_dir            = file.path("data/outputs/occ_eda", slug(sp))
   )
 }
 
