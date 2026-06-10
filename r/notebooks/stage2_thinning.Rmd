@@ -1,0 +1,119 @@
+---
+title: "`r paste0('Etapa 2 — Corrección de sesgo espacial / thinning (', params$species_label, ')')`"
+output: html_document
+params:
+  species_label: "Cyttaria hariotii"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, message = FALSE, warning = FALSE)
+library(readr)
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+library(sf)
+library(knitr)
+
+ROOT <- "../../data/outputs/issue69_thinning"
+SHP  <- "../../data/shp/argentina/argentina.shp"
+
+summary <- readr::read_csv(file.path(ROOT, "thinning_summary.csv"),
+                           show_col_types = FALSE) %>%
+  filter(species == params$species_label)
+pres <- readr::read_csv(file.path(ROOT, "presences_by_thinning.csv"),
+                        show_col_types = FALSE)
+argentina <- sf::st_read(SHP, quiet = TRUE)
+```
+
+La corrección de sesgo por **raleo espacial** (*grid thinning*) es una pregunta
+**empírica** para esta especie: no se asume que ayude. Se barre la distancia de
+raleo (0 = sin corrección, 5, 15, 30 km) sobre dos conjuntos de predictores
+(`bioclim`, `bioclim_veg`) y los tres algoritmos, y se mide su efecto sobre las
+métricas (bajo CV por bloques espaciales, K=5) y sobre el tamaño de muestra.
+
+## Boyce vs. distancia de raleo (métrica protagonista)
+
+El índice de Boyce —continuo e independiente del umbral— es la métrica más honesta
+ante el sesgo de muestreo, por eso lidera la lectura.
+
+```{r boyce, fig.width = 8, fig.height = 4}
+ggplot(summary %>% filter(!is.na(boyce)),
+       aes(x = thinning_km, y = boyce, colour = algo, group = algo)) +
+  geom_line() + geom_point(size = 2) +
+  facet_wrap(~ env_set) +
+  scale_x_continuous(breaks = c(0, 5, 15, 30)) +
+  labs(x = "Distancia de raleo (km; 0 = sin corrección)", y = "Boyce",
+       colour = "Algoritmo",
+       title = "Efecto del thinning sobre el índice de Boyce") +
+  theme_minimal()
+```
+
+## TSS y AUC vs. distancia de raleo (secundarias)
+
+```{r tss-auc, fig.width = 9, fig.height = 4.5}
+summary %>%
+  select(env_set, thinning_km, algo, TSS = tss, AUC = auc) %>%
+  pivot_longer(c(TSS, AUC), names_to = "metric", values_to = "value") %>%
+  filter(!is.na(value)) %>%
+  ggplot(aes(x = thinning_km, y = value, colour = algo, group = algo)) +
+  geom_line() + geom_point(size = 1.8) +
+  facet_grid(metric ~ env_set) +
+  scale_x_continuous(breaks = c(0, 5, 15, 30)) +
+  labs(x = "Distancia de raleo (km)", y = NULL, colour = "Algoritmo") +
+  theme_minimal()
+```
+
+## Costo en tamaño de muestra
+
+El raleo reduce drásticamente las presencias: ese es el otro lado del trade-off.
+
+```{r n-pres}
+npres <- summary %>%
+  distinct(thinning_km, n_presences) %>%
+  arrange(thinning_km) %>%
+  mutate(`% de la muestra` = round(100 * n_presences / max(n_presences)))
+knitr::kable(npres, col.names = c("Raleo (km)", "Presencias", "% de la muestra"))
+```
+
+```{r n-pres-plot, fig.width = 6, fig.height = 3}
+ggplot(npres, aes(x = factor(thinning_km), y = n_presences)) +
+  geom_col(fill = "steelblue") +
+  geom_text(aes(label = n_presences), vjust = -0.3, size = 3.5) +
+  labs(x = "Distancia de raleo (km)", y = "Presencias") +
+  theme_minimal()
+```
+
+## Efecto espacial del raleo (antes / después)
+
+```{r map, fig.width = 9, fig.height = 7}
+pres_map <- pres %>%
+  filter(thinning_km %in% c(0, 5)) %>%
+  mutate(panel = ifelse(thinning_km == 0,
+                        "Sin corrección", "Raleo 5 km"))
+ggplot() +
+  geom_sf(data = argentina, fill = "grey97", colour = "grey60") +
+  geom_point(data = pres_map,
+             aes(x = decimalLongitude, y = decimalLatitude),
+             colour = "firebrick", alpha = 0.55, size = 1) +
+  coord_sf(xlim = c(-75, -62), ylim = c(-56, -36)) +
+  facet_wrap(~ panel) +
+  labs(x = NULL, y = NULL,
+       title = "Presencias antes y después del raleo a 5 km") +
+  theme_minimal()
+```
+
+## Estabilidad de la validación cruzada
+
+Se reporta la estabilidad de la CV (folds efectivos de los 5, y estado de cada
+ajuste). Como el background es de cobertura nacional, los bloques espaciales se
+arman aun con la muestra colapsada, de modo que la CV se mantiene en K=5 incluso a
+30 km; el costo del raleo es la **pérdida de muestra y el ruido en Boyce con pocas
+presencias**, más que el colapso de la validación.
+
+```{r stability}
+summary %>%
+  select(env_set, `Raleo (km)` = thinning_km, algo,
+         `Folds usados (de 5)` = k_folds, Estado = status) %>%
+  arrange(env_set, `Raleo (km)`, algo) %>%
+  knitr::kable()
+```
