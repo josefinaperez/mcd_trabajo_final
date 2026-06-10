@@ -31,7 +31,8 @@ clean_occurrences <- function(df,
                               scientific_name,
                               max_uncertainty_km,
                               shp_area,
-                              tests)
+                              tests,
+                              match_field = "scientificName")
 {
   df <- as.data.frame(df)
   df$.row_id <- seq_len(nrow(df))
@@ -67,8 +68,11 @@ clean_occurrences <- function(df,
   #    puede verificar coherencia temporal con los predictores; issue #22).
   df <- apply_stage(df, !is.na(df$year) & df$year >= min_year, "year")
 
-  # 3) scientificName objetivo
-  df <- apply_stage(df, df$scientificName %in% scientific_name, "species")
+  # 3) Taxón objetivo. Se matchea contra `match_field`: para un target a
+  #    nivel familia (p. ej. "Polyporaceae") la columna `scientificName` trae
+  #    el nombre literal; para una especie conviene `species` (binomio limpio),
+  #    porque `scientificName` incluye la autoría ("Trametes versicolor (L.) Lloyd").
+  df <- apply_stage(df, df[[match_field]] %in% scientific_name, "species")
 
   # 4) Recorte al área de estudio (Argentina). filter_points devuelve los
   #    registros dentro del polígono; identificamos los removidos por .row_id.
@@ -206,7 +210,8 @@ preprocess_dataset <- function(df_path,
                                max_uncertainty_km,
                                shp_path,
                                tests,
-                               eda_dir = NULL)
+                               eda_dir = NULL,
+                               match_field = "scientificName")
 {
   df_raw   <- read_csv(df_path)
   shp_area <- create_shp_from(shp_path)
@@ -217,7 +222,8 @@ preprocess_dataset <- function(df_path,
     scientific_name    = scientific_name,
     max_uncertainty_km = max_uncertainty_km,
     shp_area           = shp_area,
-    tests              = tests
+    tests              = tests,
+    match_field        = match_field
   )
 
   dir.create(dirname(preproc_path), recursive = TRUE, showWarnings = FALSE)

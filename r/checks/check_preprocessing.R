@@ -96,4 +96,27 @@ res_cc <- clean_occurrences(
 stopifnot("coordinate_cleaner" %in% res_cc$funnel$stage)
 ok("etapa coordinate_cleaner presente con tests")
 
+# ---- match_field: matchear por `species` ignora la autoría de scientificName ----
+df_sp <- data.frame(
+  scientificName = c("Trametes versicolor (L.) Lloyd",
+                     "Trametes versicolor (L.) Lloyd",
+                     "Trametes villosa (Sw.) Kreisel"),
+  species        = c("Trametes versicolor", "Trametes versicolor",
+                     "Trametes villosa"),
+  year = 2015, basisOfRecord = "PRESERVED_SPECIMEN",
+  coordinateUncertaintyInMeters = 1000,
+  decimalLongitude = -62, decimalLatitude = -37,
+  stringsAsFactors = FALSE
+)
+# match por scientificName exacto: 0 sobreviven (la autoría no matchea)
+r_sci <- clean_occurrences(df_sp, 2010, "Trametes versicolor", 5, shp_area,
+                           character(0), match_field = "scientificName")
+stopifnot(nrow(r_sci$clean) == 0)
+# match por species: sobreviven los 2 de versicolor, se descarta villosa
+r_spc <- clean_occurrences(df_sp, 2010, "Trametes versicolor", 5, shp_area,
+                           character(0), match_field = "species")
+stopifnot(nrow(r_spc$clean) == 2)
+stopifnot(all(r_spc$clean$species == "Trametes versicolor"))
+ok("match_field='species' matchea binomio ignorando autoría")
+
 cat("\nTodos los checks de preprocessing OK\n")

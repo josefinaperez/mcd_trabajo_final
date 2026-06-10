@@ -34,11 +34,18 @@ species_csv <- function(scientific_name, dir) {
 # Agregar una especie aquí propaga a download, preprocess y build.
 # ------------------------------------------------------------
 
+# `match_field`: columna contra la que se matchea el target taxonómico en
+# preprocess. "scientificName" para un target a nivel familia (Polyporaceae,
+# nombre literal); "species" para una especie (binomio limpio, sin la autoría
+# que trae scientificName). Cada especie corre en paralelo: archivos y run_ids
+# propios por slug, sin pisar lo ya hecho.
 species_config <- tibble::tribble(
-  ~scientific_name,         ~min_year, ~max_uncertainty_km,
-  "Polyporaceae",                 2010,                   5
-  # "Pycnoporus sanguineus",      2010,                   5,
-  # "Ganoderma applanatum",       2010,                   5
+  ~scientific_name,         ~min_year, ~max_uncertainty_km, ~match_field,
+  "Polyporaceae",                 2010,                   5, "scientificName",
+  "Cyttaria hariotii",            2010,                   5, "species"
+  # Alternativas consideradas (hongos útiles de recolección silvestre):
+  # "Trametes versicolor",        2010,                   5, "species",
+  # "Fistulina antarctica",       2010,                   5, "species"
 )
 
 raw_occ_dir       <- "data/ocurrences/raw"
@@ -82,6 +89,7 @@ for (i in seq_len(nrow(species_config))) {
     max_uncertainty_km = species_config$max_uncertainty_km[i],
     shp_path           = shp_path,
     tests              = tests_default,
+    match_field        = species_config$match_field[i],
     # Artefactos EDA para Resultados (issue #68): embudo de limpieza,
     # removidos con motivo y descriptivos del conjunto final.
     eda_dir            = file.path("data/outputs/occ_eda", slug(sp))
