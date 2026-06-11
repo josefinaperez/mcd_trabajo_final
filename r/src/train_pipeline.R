@@ -160,6 +160,13 @@ write_csv(
 # Cache de folds por run_id (solo para spatial_block).
 fold_cache <- new.env(parent = emptyenv())
 
+# Aislamiento de fallos: un fit inviable (p. ej. maxnet/glmnet ante un
+# background environmentally_dissimilar/three_step que separa casi perfecto
+# presencia vs background) no debe abortar el batch entero. Se acumulan los
+# (run × algo) caídos para registrarlos y se continúa. Mismo idioma que el
+# loop de folds (warning + NULL + compact) pero a nivel de run.
+failed_runs <- list()
+
 get_folds <- function(run_id, dataset_path) {
   if (!is.null(fold_cache[[run_id]])) return(fold_cache[[run_id]])
   ds_df <- read_csv(dataset_path, show_col_types = FALSE)
@@ -195,19 +202,32 @@ train_one <- function(i, cv_scheme, algo) {
   message("[", i, "/", nrow(datasets_manifest), "] ", run_id,
           "  (", cv_scheme, " / ", algo, ")")
 
-  if (cv_scheme == "spatial_block") {
-    run_model_for_dataset(
-      algo = algo, run_id = run_id, dataset_path = dataset_path,
-      out_root = MODELS_ROOT, cv_scheme = "spatial_block",
-      fold_id = get_folds(run_id, dataset_path), hp = hp
+  # Aislamiento de fallos por (run × algo): si el fit es inviable, se registra
+  # y se devuelve NULL (pmap_dfr lo descarta) en vez de abortar todo el batch.
+  # run_model_spatial_block escribe los artefactos al final, tras todos los
+  # fits, así que un error deja el run_dir sin artefactos (no corrupto).
+  tryCatch({
+    if (cv_scheme == "spatial_block") {
+      run_model_for_dataset(
+        algo = algo, run_id = run_id, dataset_path = dataset_path,
+        out_root = MODELS_ROOT, cv_scheme = "spatial_block",
+        fold_id = get_folds(run_id, dataset_path), hp = hp
+      )
+    } else {
+      run_model_for_dataset(
+        algo = algo, run_id = run_id, dataset_path = dataset_path,
+        out_root = MODELS_ROOT, cv_scheme = "holdout",
+        p_train = P_TRAIN, seed = SEED, hp = hp
+      )
+    }
+  }, error = function(e) {
+    message("  [FALLO: fit inviable, se omite] ", conditionMessage(e))
+    failed_runs[[length(failed_runs) + 1L]] <<- tibble(
+      run_id = run_id, cv_scheme = cv_scheme, algorithm = algo,
+      error = conditionMessage(e)
     )
-  } else {
-    run_model_for_dataset(
-      algo = algo, run_id = run_id, dataset_path = dataset_path,
-      out_root = MODELS_ROOT, cv_scheme = "holdout",
-      p_train = P_TRAIN, seed = SEED, hp = hp
-    )
-  }
+    NULL
+  })
 }
 
 train_grid <- tidyr::expand_grid(
@@ -231,6 +251,18 @@ basic_metrics_per_run <- purrr::pmap_dfr(
   train_grid,
   function(cv_scheme, algo, i) train_one(i, cv_scheme, algo)
 )
+
+# Registro de (run × algo) inviables (no abortan el batch; quedan fuera del
+# summary/ganadores). Reportable: típicamente maxnet sobre backgrounds que
+# separan presencia/background (environmentally_dissimilar / three_step).
+if (length(failed_runs) > 0) {
+  failed_df <- dplyr::bind_rows(failed_runs)
+  write_csv(failed_df, file.path(MODELS_ROOT, "failed_runs.csv"))
+  message(sprintf("\n%d (run × algo) inviables, registrados en failed_runs.csv:",
+                  nrow(failed_df)))
+  purrr::walk2(failed_df$run_id, failed_df$algorithm,
+               ~ message("  - ", .x, " / ", .y))
+}
 
 # ------------------------------------------------------------
 # 4) Evaluación dual (TSS / FNR @ Youden + Boyce) por run
