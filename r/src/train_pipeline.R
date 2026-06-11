@@ -92,6 +92,21 @@ if (!file.exists(datasets_manifest_path)) {
 
 datasets_manifest <- read_csv(datasets_manifest_path, show_col_types = FALSE)
 
+# Filtro opcional por especie: SDM_SPECIES="Coprinus comatus" (o lista
+# separada por comas) entrena solo esas especies. Vacío = todas (default).
+# Útil con varias especies en el manifest para no re-entrenar todo.
+species_filter <- trimws(Sys.getenv("SDM_SPECIES", ""))
+if (nzchar(species_filter)) {
+  wanted <- trimws(strsplit(species_filter, ",")[[1]])
+  datasets_manifest <- dplyr::filter(datasets_manifest,
+                                     tolower(species) %in% tolower(wanted))
+  message("Filtro SDM_SPECIES activo -> ", paste(wanted, collapse = ", "),
+          " (", nrow(datasets_manifest), " datasets)")
+  if (nrow(datasets_manifest) == 0) {
+    stop("SDM_SPECIES no coincide con ninguna especie del manifest.")
+  }
+}
+
 # ------------------------------------------------------------
 # 2) Calibración global del tamaño de bloque
 # ------------------------------------------------------------
