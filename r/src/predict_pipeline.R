@@ -33,44 +33,44 @@ MAPS_ROOT     <- "data/outputs/sdm_maps"
 WINNER_EXCLUDE_REGEX <- "_anthro"
 
 # ------------------------------------------------------------
-# 1) SELECCIÓN: filtro FNR + argmax TSS por cv_scheme
+# 1) SELECCIÓN: ganador por argmax Boyce por (cv_scheme, bp_group)
 # ------------------------------------------------------------
 #
-# Dado el summary de Etapa 2, marca los runs que pasan el
-# filtro de consistencia (fnr <= tau_fnr) y, entre ellos,
-# el ganador (argmax tss) DENTRO de cada cv_scheme. Devuelve
-# el summary enriquecido con:
-#   - passes_filter (lógico)
-#   - is_winner     (lógico, ganador dentro del cv_scheme)
-#   - winner_role   (character: "winner_<cv_scheme>" o NA)
-# Si ningún run pasa el filtro en un esquema, sus winners
-# quedan en NA/FALSE para ese esquema.
+# Dado el summary de Etapa 2, marca el ganador por GRUPO de background
+# (uniform vs target_group, #59) usando el **Boyce** como criterio (#56), y
+# reporta aparte el filtro de sensibilidad (fnr <= tau_fnr) como DIAGNÓSTICO.
+# Devuelve el summary enriquecido con:
+#   - passes_filter (lógico, fnr <= tau_fnr; solo informativo)
+#   - is_winner     (lógico, argmax boyce dentro de cv_scheme × bp_group)
+#   - winner_role   (character: "winner_<cv_scheme>_<bp_group>" o NA)
+#
+# Por qué Boyce y no TSS+piso de FNR: el TSS no es comparable entre estrategias
+# de background (las que separan el fondo del nicho —dissimilar/three_step— lo
+# inflan) y el piso absoluto de FNR no transfiere entre bp_groups: la corrección
+# de sesgo (target_group) sube estructuralmente el FNR (el modelo deja de
+# sobre-predecir en zonas accesibles), así que un FNR <= 0.2 eliminaba TODOS los
+# modelos corregidos buenos (Boyce ~0.93) y coronaba al único que pasaba, un
+# sobreajuste con Boyce ~0.27. El Boyce (continuo, sin umbral) es comparable y
+# es el árbitro correcto. El FNR del ganador se reporta para que el trade-off de
+# sensibilidad quede explícito.
 # ------------------------------------------------------------
 
 select_runs <- function(summary_df, tau_fnr, winner_exclude_regex = NULL) {
-  stopifnot(all(c("run_id", "cv_scheme", "bp_group", "algorithm", "tss", "fnr") %in% names(summary_df)))
+  stopifnot(all(c("run_id", "cv_scheme", "bp_group", "algorithm", "tss", "fnr", "boyce") %in% names(summary_df)))
 
   out <- summary_df |>
     mutate(passes_filter = fnr <= tau_fnr)
 
-  # Ganador cross-algoritmo: argmax TSS sobre todos los (run_id, algorithm)
-  # que pasan el filtro DENTRO de cada (cv_scheme, bp_group) (#59). Se declara
-  # un ganador por GRUPO de background (uniform vs target_group): dentro de
-  # uniform el TSS es comparable (mismo tipo de contraste, fondo uniforme), pero
-  # target_group produce un contraste cualitativamente distinto (fondo ponderado
-  # por accesibilidad), así que es tarea aparte. La comparación entre los 2
-  # ganadores (Boyce como árbitro) es del análisis, no se automatiza. El ganador
-  # del grupo puede ser cualquier algoritmo y cualquier bp_method del grupo.
-  # winner_exclude_regex (#47) saca de la candidatura a los env_sets de
-  # diagnóstico (antrópicos), que igual quedan como sobrevivientes pero nunca
-  # is_winner.
-  winner_pool <- out |> filter(passes_filter)
+  # Candidatos a ganador: TODO el grupo (el filtro de FNR ya no decide). Solo se
+  # excluyen los env_sets de diagnóstico antrópico (#47), que pueden ser
+  # sobrevivientes pero nunca ganador.
+  winner_pool <- out
   if (!is.null(winner_exclude_regex)) {
     winner_pool <- winner_pool |> filter(!grepl(winner_exclude_regex, run_id))
   }
   winners <- winner_pool |>
     group_by(cv_scheme, bp_group) |>
-    slice_max(tss, n = 1, with_ties = FALSE) |>
+    slice_max(boyce, n = 1, with_ties = FALSE) |>
     ungroup() |>
     transmute(run_id, cv_scheme, algorithm, .is_winner_row = TRUE)
 
@@ -200,7 +200,12 @@ main <- function() {
   rob <- compute_tau_fnr_robustness(summary_df, TAU_FNR_GRID, WINNER_EXCLUDE_REGEX)
   readr::write_csv(rob, file.path(MAPS_ROOT, "tau_fnr_robustness.csv"))
 
-  to_map <- sel |> filter(passes_filter) |> select(run_id, cv_scheme, algorithm)
+  # Mapear los que pasan el filtro de sensibilidad MÁS los ganadores (el ganador
+  # del grupo corregido puede tener FNR alto y no pasar el filtro; igual debe
+  # mapearse). distinct evita duplicar el ganador que sí pasa el filtro.
+  to_map <- sel |>
+    filter(passes_filter | is_winner) |>
+    distinct(run_id, cv_scheme, algorithm)
   message("Mapeando ", nrow(to_map), " trío(s) (run_id, cv_scheme, algorithm).")
 
   env <- load_env_stack()
