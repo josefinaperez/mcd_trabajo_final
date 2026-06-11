@@ -42,7 +42,8 @@ species_csv <- function(scientific_name, dir) {
 species_config <- tibble::tribble(
   ~scientific_name,         ~min_year, ~max_uncertainty_km, ~match_field,
   "Polyporaceae",                 2010,                   5, "scientificName",
-  "Cyttaria hariotii",            2010,                   5, "species"
+  "Cyttaria hariotii",            2010,                   5, "species",
+  "Coprinus comatus",             2010,                   5, "species"
   # Alternativas consideradas (hongos útiles de recolección silvestre):
   # "Trametes versicolor",        2010,                   5, "species",
   # "Fistulina antarctica",       2010,                   5, "species"
