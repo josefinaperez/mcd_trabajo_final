@@ -51,6 +51,14 @@ LIME_CRITICAL_POINTS <- list(
     ~point_id,           ~lon,    ~lat,    ~region,
     "yungas_NOA",        -64.85, -23.65,   "Yungas (Calilegua)",
     "andean_patagonia",  -71.5,  -41.0,    "Bosque andino-patagonico (Nahuel Huapi)"
+  ),
+  # Coprinus comatus: saprotrofo de suelo, no asociado a un bosque. Dos sitios
+  # dentro de su rango registrado en AR: el nucleo pampeano (alta idoneidad) y
+  # la Patagonia fueguina (presente pero ambiente contrastante, clima frio).
+  coprinus_comatus = tibble::tribble(
+    ~point_id,           ~lon,    ~lat,    ~region,
+    "pampa_humeda",      -59.5,  -35.5,    "Pampa humeda (nucleo de distribucion)",
+    "patagonia_fueguina", -67.7, -53.8,    "Patagonia fueguina (Rio Grande, Tierra del Fuego)"
   )
 )
 
