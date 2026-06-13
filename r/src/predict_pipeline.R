@@ -242,6 +242,7 @@ main <- function() {
       algorithm,
       winner_role,
       tau_fnr_main      = TAU_FNR_MAIN,
+      boyce,
       threshold_max_tss,
       tss,
       fnr,
