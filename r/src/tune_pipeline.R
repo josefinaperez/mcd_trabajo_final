@@ -125,6 +125,21 @@ if (sys.nframe() == 0L) {
   }
   datasets_manifest <- read_csv(manifest_path, show_col_types = FALSE)
 
+  # Filtro opcional por especie: SDM_SPECIES="Coprinus comatus" (o lista
+  # separada por comas) tunea sólo esas especies. Vacío = todas (default).
+  # Espejo del filtro de train_pipeline.R (commit 01f6778).
+  species_filter <- trimws(Sys.getenv("SDM_SPECIES", ""))
+  if (nzchar(species_filter)) {
+    wanted <- trimws(strsplit(species_filter, ",")[[1]])
+    datasets_manifest <- dplyr::filter(datasets_manifest,
+                                       tolower(species) %in% tolower(wanted))
+    message("Filtro SDM_SPECIES activo -> ", paste(wanted, collapse = ", "),
+            " (", nrow(datasets_manifest), " datasets)")
+    if (nrow(datasets_manifest) == 0) {
+      stop("SDM_SPECIES no coincide con ninguna especie del manifest.")
+    }
+  }
+
   block_size_m <- get_block_size_m()
 
   existing_best_hp <- if (file.exists(BEST_HP_PATH)) {
@@ -148,6 +163,14 @@ if (sys.nframe() == 0L) {
                                existing_best_hp, block_size_m)
   )
 
+  # Si se filtró por especie, preservar las filas ya tuneadas de las demás
+  # especies; de lo contrario write_csv sobrescribiría best_hp.csv con sólo
+  # las nuevas.
+  if (nzchar(species_filter) && !is.null(existing_best_hp)) {
+    keep <- dplyr::anti_join(existing_best_hp, best_hp,
+                             by = c("run_id", "algorithm"))
+    best_hp <- dplyr::bind_rows(keep, best_hp)
+  }
   write_csv(best_hp, BEST_HP_PATH)
   message("OK. best_hp.csv escrito en: ", BEST_HP_PATH)
   print(best_hp)
