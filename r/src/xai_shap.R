@@ -1,6 +1,6 @@
 # ============================================================
 # File: xai_shap.R
-# Purpose: Cómputo de valores SHAP (KernelSHAP) vía fastshap
+# Purpose: Cómputo de valores SHAP (muestreo Monte Carlo) vía fastshap
 #          y plot resumen (barplot |SHAP| medio + beeswarm).
 #          Consume el predict_fn de xai_predict.R.
 # ============================================================
