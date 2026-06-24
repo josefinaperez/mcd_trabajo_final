@@ -82,7 +82,10 @@ importance_from_shap <- function(shap_df) {
 #   patchwork ggplot.
 # ------------------------------------------------------------
 
+pretty_var <- function(x) gsub("wc2[._]1[._]2[._]5m[._]", "", x)
+
 plot_shap_summary <- function(shap_df, X_explain, importance, run_id) {
+  importance <- dplyr::mutate(importance, variable = pretty_var(variable))
   p_bar <- importance |>
     ggplot(aes(x = stats::reorder(variable, mean_abs_shap),
                y = mean_abs_shap)) +
@@ -95,13 +98,15 @@ plot_shap_summary <- function(shap_df, X_explain, importance, run_id) {
   shap_long <- shap_df |>
     dplyr::mutate(.row = dplyr::row_number()) |>
     tidyr::pivot_longer(-".row", names_to = "variable",
-                        values_to = "shap_value")
+                        values_to = "shap_value") |>
+    dplyr::mutate(variable = pretty_var(variable))
 
   feat_long <- X_explain |>
     dplyr::as_tibble() |>
     dplyr::mutate(.row = dplyr::row_number()) |>
     tidyr::pivot_longer(-".row", names_to = "variable",
                         values_to = "feature_value") |>
+    dplyr::mutate(variable = pretty_var(variable)) |>
     dplyr::group_by(variable) |>
     dplyr::mutate(feature_scaled = (feature_value - min(feature_value)) /
                                    (max(feature_value) - min(feature_value) + 1e-12)) |>
@@ -124,9 +129,5 @@ plot_shap_summary <- function(shap_df, X_explain, importance, run_id) {
     theme_minimal(base_size = 9) +
     theme(legend.position = "right")
 
-  (p_bar | p_bee) +
-    patchwork::plot_annotation(
-      title = paste0("SHAP — ", run_id),
-      theme = ggplot2::theme(plot.title = element_text(size = 11))
-    )
+  (p_bar | p_bee)
 }

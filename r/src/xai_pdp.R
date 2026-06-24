@@ -69,9 +69,12 @@ compute_pdp <- function(model, X_train, predictors,
 #   run_id     : string para el título
 # ------------------------------------------------------------
 
+pretty_var <- function(x) gsub("wc2[._]1[._]2[._]5m[._]", "", x)
+
 plot_pdp_grid <- function(pdp_df, importance, run_id) {
-  var_order <- importance$variable
+  var_order <- pretty_var(importance$variable)
   pdp_df |>
+    dplyr::mutate(variable = pretty_var(variable)) |>
     dplyr::mutate(variable = factor(variable, levels = var_order)) |>
     ggplot(aes(x = x, y = yhat)) +
     geom_line(color = "#b40426", linewidth = 0.6) +
@@ -79,7 +82,6 @@ plot_pdp_grid <- function(pdp_df, importance, run_id) {
     coord_cartesian(ylim = c(0, 1)) +
     labs(x = "Valor de la variable",
          y = "Idoneidad [0–1] (PDP)",
-         title = paste0("PDP — ", run_id),
          subtitle = "Variables ordenadas por |SHAP| medio") +
     theme_minimal(base_size = 9)
 }

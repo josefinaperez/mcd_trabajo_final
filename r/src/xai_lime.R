@@ -232,7 +232,10 @@ compute_lime <- function(model, points, X_train,
 #     Verde = empuja a presence; rojo = empuja a background.
 # ------------------------------------------------------------
 
+pretty_var <- function(x) gsub("wc2[._]1[._]2[._]5m[._]", "", x)
+
 plot_lime_panel <- function(lime_df, points, run_id) {
+  lime_df <- dplyr::mutate(lime_df, feature = pretty_var(feature))
   meta <- points |> dplyr::select(point_id, origin, score, lon, lat)
 
   make_subplot <- function(pid) {
@@ -259,9 +262,5 @@ plot_lime_panel <- function(lime_df, points, run_id) {
   }
 
   plots <- lapply(points$point_id, make_subplot)
-  patchwork::wrap_plots(plots, ncol = 4) +
-    patchwork::plot_annotation(
-      title = paste0("LIME — ", run_id),
-      theme = ggplot2::theme(plot.title = element_text(size = 11))
-    )
+  patchwork::wrap_plots(plots, ncol = 4)
 }
