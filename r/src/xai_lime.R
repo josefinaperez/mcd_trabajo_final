@@ -234,17 +234,40 @@ compute_lime <- function(model, points, X_train,
 
 pretty_var <- function(x) gsub("wc2[._]1[._]2[._]5m[._]", "", x)
 
+# Geocodifica cada punto a su provincia (GADM nivel 1) para rotular los
+# subplots con un lugar legible en vez del point_id. Si falta el shapefile
+# o el paquete sf, devuelve NA y el título cae a las coordenadas.
+geocode_provincia <- function(meta) {
+  shp <- "data/shp/argentina/gadm41_ARG_1.shp"
+  if (!requireNamespace("sf", quietly = TRUE) || !file.exists(shp)) {
+    return(rep(NA_character_, nrow(meta)))
+  }
+  prov <- sf::st_read(shp, quiet = TRUE)
+  pts  <- sf::st_transform(
+    sf::st_as_sf(meta, coords = c("lon", "lat"), crs = 4326),
+    sf::st_crs(prov))
+  idx  <- sf::st_within(pts, prov)
+  vapply(idx, function(i) if (length(i)) prov$NAME_1[i[1]] else NA_character_,
+         character(1))
+}
+
 plot_lime_panel <- function(lime_df, points, run_id) {
   lime_df <- dplyr::mutate(lime_df, feature = pretty_var(feature))
   meta <- points |> dplyr::select(point_id, origin, score, lon, lat)
+  meta$provincia <- geocode_provincia(meta)
 
   make_subplot <- function(pid) {
     sub <- lime_df |> dplyr::filter(point_id == pid)
     m   <- meta   |> dplyr::filter(point_id == pid)
     titlestr <- if (is.na(m$score)) {
-      sprintf("%s\n(%.2f, %.2f) — %s", pid, m$lon, m$lat, m$origin)
+      # punto diagnóstico elegido a mano: región descriptiva
+      sprintf("%s\npunto diagnóstico", sub("^raster_", "", m$origin))
     } else {
-      sprintf("%s\nscore=%.2f — %s", pid, m$score, m$origin)
+      tipo <- if (grepl("alto", m$origin)) "bien predicha" else "mal predicha"
+      loc  <- if (!is.na(m$provincia)) m$provincia
+              else sprintf("(%.1f, %.1f)", m$lon, m$lat)
+      sprintf("%s\n%s (score %s)", loc, tipo,
+              sub("\\.", ",", sprintf("%.2f", m$score)))
     }
     sub |>
       dplyr::mutate(sign = ifelse(weight >= 0, "presence", "background")) |>
