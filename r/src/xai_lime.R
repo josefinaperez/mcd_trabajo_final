@@ -259,9 +259,13 @@ plot_lime_panel <- function(lime_df, points, run_id) {
   make_subplot <- function(pid) {
     sub <- lime_df |> dplyr::filter(point_id == pid)
     m   <- meta   |> dplyr::filter(point_id == pid)
-    titlestr <- if (is.na(m$score)) {
-      # punto diagnóstico elegido a mano: región descriptiva
-      sprintf("%s\npunto diagnóstico", sub("^raster_", "", m$origin))
+    titlestr <- if (grepl("^raster_", m$origin)) {
+      # punto diagnóstico elegido a mano: región descriptiva + idoneidad si está
+      reg <- sub("^raster_", "", m$origin)
+      sc  <- if (!is.na(m$score))
+               sprintf(" (idoneidad %s)", sub("\\.", ",", sprintf("%.2f", m$score)))
+             else ""
+      sprintf("%s\npunto diagnóstico%s", reg, sc)
     } else {
       tipo <- if (grepl("alto", m$origin)) "bien predicha" else "mal predicha"
       loc  <- if (!is.na(m$provincia)) m$provincia

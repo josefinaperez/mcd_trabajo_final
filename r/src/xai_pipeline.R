@@ -57,8 +57,8 @@ LIME_CRITICAL_POINTS <- list(
   # la Patagonia fueguina (presente pero ambiente contrastante, clima frio).
   coprinus_comatus = tibble::tribble(
     ~point_id,           ~lon,    ~lat,    ~region,
-    "pampa_humeda",      -59.5,  -35.5,    "Pampa humeda (nucleo de distribucion)",
-    "patagonia_fueguina", -67.7, -53.8,    "Patagonia fueguina (Rio Grande, Tierra del Fuego)"
+    "pampa_humeda",      -59.5,  -35.5,    "Pampa húmeda (núcleo de distribución)",
+    "patagonia_fueguina", -67.7, -53.8,    "Patagonia fueguina (Río Grande, Tierra del Fuego)"
   )
 )
 
