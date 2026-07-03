@@ -153,7 +153,7 @@ explain_one_run <- function(run_id, cv_scheme, algorithm, role, env_stack,
   # falla en algunos modelos (p. ej. ranger con predict_model custom -> "NAs in
   # V(mu)" de glmnet). Se aísla en tryCatch para que una falla de LIME no tire
   # abajo el run: SHAP + PDP igual quedan persistidos.
-  message("  LIME: seleccionando 8 puntos + explicando")
+  message("  LIME: seleccionando 4 puntos + explicando")
   lime_ok <- tryCatch({
     pts <- select_lime_points(preds, ds, env_stack, crit)
     lime_df <- compute_lime(model, pts, X_train,
@@ -166,7 +166,7 @@ explain_one_run <- function(run_id, cv_scheme, algorithm, role, env_stack,
                      file.path(run_dir, "lime_points.csv"))
     readr::write_csv(lime_df, file.path(run_dir, "lime_weights.csv"))
     ggsave(file.path(run_dir, "lime_panel.png"),
-           p_lime, width = 14, height = 7, dpi = 150)
+           p_lime, width = 10, height = 8, dpi = 150)
     nrow(pts)
   }, error = function(e) {
     warning("explain_one_run: LIME falló para ", run_id, " / ", algorithm,

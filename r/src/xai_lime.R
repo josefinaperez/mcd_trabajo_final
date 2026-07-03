@@ -77,11 +77,11 @@ predict_model.xgb.Booster <- function(x, newdata, type, ...) .lime_predict_df(x,
 .override_lime_builtins()
 
 # ------------------------------------------------------------
-# (2) select_lime_points: arma 8 puntos por run.
+# (2) select_lime_points: arma 4 puntos por run.
 #
 # Reglas:
-#   - 3 presencias del test set con score alto (top quintil)
-#   - 3 presencias del test set con score bajo (bottom quintil)
+#   - 1 presencia del test set con score alto (top quintil)
+#   - 1 presencia del test set con score bajo (bottom quintil)
 #   - 2 puntos críticos del raster (coordenadas fijas por especie)
 #
 # Args:
@@ -106,8 +106,8 @@ select_lime_points <- function(predictions_test, ds_model_ready,
   # Join de features ANTES de samplear: una fracción de las coords de
   # predictions_test no casa exacto contra el dataset por precisión de floats
   # al escribir los CSV. Si se sampleara primero, un punto sin match tiraría el
-  # join a <6 y abortaría. Se arma el pool de presencias YA matcheadas (orden
-  # por score desc) y se samplean los 3 alto / 3 bajo de ahí.
+  # join por debajo del mínimo y abortaría. Se arma el pool de presencias YA
+  # matcheadas (orden por score desc) y se samplea 1 alta / 1 baja de ahí.
   pres_feat <- ds_model_ready |>
     dplyr::rename(lon = decimalLongitude, lat = decimalLatitude) |>
     dplyr::select(lon, lat, dplyr::all_of(pred_cols))
@@ -121,13 +121,13 @@ select_lime_points <- function(predictions_test, ds_model_ready,
     dplyr::arrange(dplyr::desc(score))
 
   n_pres <- nrow(pres_pool)
-  if (n_pres < 6) {
+  if (n_pres < 2) {
     stop("select_lime_points: faltan presencias con features (", n_pres, ")")
   }
 
   set.seed(42)
-  high_idx <- sample(seq_len(max(1, ceiling(n_pres * 0.2))), size = 3)
-  low_idx  <- sample(seq(n_pres - ceiling(n_pres * 0.2) + 1, n_pres), size = 3)
+  high_idx <- sample(seq_len(max(1, ceiling(n_pres * 0.2))), size = 1)
+  low_idx  <- sample(seq(n_pres - ceiling(n_pres * 0.2) + 1, n_pres), size = 1)
 
   high_pres <- pres_pool[high_idx, ] |>
     dplyr::mutate(point_id = paste0("pres_high_", dplyr::row_number()),
@@ -228,7 +228,7 @@ compute_lime <- function(model, points, X_train,
 }
 
 # ------------------------------------------------------------
-# (4) plot_lime_panel: 8 subplots, barras horizontales de pesos.
+# (4) plot_lime_panel: 4 subplots (2x2), barras horizontales de pesos.
 #     Verde = empuja a presence; rojo = empuja a background.
 # ------------------------------------------------------------
 
@@ -284,10 +284,10 @@ plot_lime_panel <- function(lime_df, points, run_id) {
                         guide = "none") +
       labs(x = NULL, y = "peso LIME",
            title = titlestr) +
-      theme_minimal(base_size = 8) +
-      theme(plot.title = element_text(size = 8))
+      theme_minimal(base_size = 11) +
+      theme(plot.title = element_text(size = 11))
   }
 
   plots <- lapply(points$point_id, make_subplot)
-  patchwork::wrap_plots(plots, ncol = 4)
+  patchwork::wrap_plots(plots, ncol = 2)
 }
