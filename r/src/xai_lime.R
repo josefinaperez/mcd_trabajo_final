@@ -93,14 +93,19 @@ predict_model.xgb.Booster <- function(x, newdata, type, ...) .lime_predict_df(x,
 #                      (para extraer features en los puntos críticos)
 #   critical_points  : tibble con (point_id, lon, lat, region)
 #                      por especie
+#   model            : modelo SDM del run, para puntuar los puntos
+#                      críticos con la idoneidad del modelo (misma
+#                      escala [0,1] que el mapa)
 #
 # Returns:
 #   tibble con columnas: point_id, lon, lat, score, origin,
-#   class_observed + las columnas de predictores del run.
+#   class_observed + las columnas de predictores del run. Para las
+#   presencias, score es el del set de prueba; para los puntos
+#   críticos, la idoneidad del modelo en esas coordenadas.
 # ------------------------------------------------------------
 
 select_lime_points <- function(predictions_test, ds_model_ready,
-                               env_stack, critical_points) {
+                               env_stack, critical_points, model) {
   pred_cols <- setdiff(names(ds_model_ready), c("class", "decimalLongitude", "decimalLatitude"))
 
   # Join de features ANTES de samplear: una fracción de las coords de
@@ -155,6 +160,18 @@ select_lime_points <- function(predictions_test, ds_model_ready,
   if (length(missing_cols) > 0) {
     stop("select_lime_points: faltan columnas tras extract: ",
          paste(missing_cols, collapse = ", "))
+  }
+
+  # Idoneidad del modelo en los puntos diagnósticos (misma escala [0,1] que el
+  # mapa de distribución). Las presencias ya traen su score del set de prueba;
+  # los puntos diagnósticos no son presencias, así que se los puntúa con el
+  # modelo. Solo se predice sobre los que tienen features completas (los de
+  # celdas NA se descartan más abajo y quedan con score NA).
+  predict_fn <- make_predict_fn(model)
+  crit_ok <- stats::complete.cases(crit_df[, pred_cols, drop = FALSE])
+  if (any(crit_ok)) {
+    crit_df$score[crit_ok] <- predict_fn(
+      model, as.data.frame(crit_df[crit_ok, pred_cols, drop = FALSE]))
   }
 
   out <- dplyr::bind_rows(

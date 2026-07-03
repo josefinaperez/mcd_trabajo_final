@@ -155,7 +155,7 @@ explain_one_run <- function(run_id, cv_scheme, algorithm, role, env_stack,
   # abajo el run: SHAP + PDP igual quedan persistidos.
   message("  LIME: seleccionando 4 puntos + explicando")
   lime_ok <- tryCatch({
-    pts <- select_lime_points(preds, ds, env_stack, crit)
+    pts <- select_lime_points(preds, ds, env_stack, crit, model)
     lime_df <- compute_lime(model, pts, X_train,
                             n_features = LIME_N_FEATURES,
                             n_permutations = LIME_N_PERMS)
