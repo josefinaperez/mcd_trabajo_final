@@ -84,7 +84,18 @@ importance_from_shap <- function(shap_df) {
 
 pretty_var <- function(x) gsub("wc2[._]1[._]2[._]5m[._]", "", x)
 
-plot_shap_summary <- function(shap_df, X_explain, importance, run_id) {
+# Título de modelo ("Modelo uniforme" / "Modelo corregido") arriba del panel,
+# para que cada figura XAI se identifique sola. Compartido por el panel global
+# y el local. Si model_label es NULL, no agrega título.
+add_model_title <- function(p, model_label) {
+  if (is.null(model_label)) return(p)
+  p + patchwork::plot_annotation(
+    title = model_label,
+    theme = ggplot2::theme(plot.title = ggplot2::element_text(
+      size = 14, face = "bold", hjust = 0.5)))
+}
+
+plot_shap_summary <- function(shap_df, X_explain, importance, run_id, model_label = NULL) {
   importance <- dplyr::mutate(importance, variable = pretty_var(variable))
   p_bar <- importance |>
     ggplot(aes(x = stats::reorder(variable, mean_abs_shap),
@@ -129,7 +140,7 @@ plot_shap_summary <- function(shap_df, X_explain, importance, run_id) {
     theme_minimal(base_size = 9) +
     theme(legend.position = "right")
 
-  (p_bar | p_bee)
+  add_model_title(p_bar | p_bee, model_label)
 }
 
 # ============================================================
@@ -287,7 +298,7 @@ geocode_provincia <- function(meta) {
 #   patchwork ggplot.
 # ------------------------------------------------------------
 
-plot_shap_local_panel <- function(shap_local_df, points, run_id) {
+plot_shap_local_panel <- function(shap_local_df, points, run_id, model_label = NULL) {
   shap_long <- shap_local_df |>
     tidyr::pivot_longer(-"point_id", names_to = "feature",
                         values_to = "shap_value") |>
@@ -342,5 +353,5 @@ plot_shap_local_panel <- function(shap_local_df, points, run_id) {
   }
 
   plots <- lapply(points$point_id, make_subplot)
-  patchwork::wrap_plots(plots, ncol = 2)
+  add_model_title(patchwork::wrap_plots(plots, ncol = 2), model_label)
 }

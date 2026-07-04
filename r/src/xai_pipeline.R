@@ -99,6 +99,12 @@ explain_one_run <- function(run_id, cv_scheme, algorithm, role, env_stack,
   run_dir <- file.path(xai_root, run_id, cv_scheme, algorithm)
   dir.create(run_dir, recursive = TRUE, showWarnings = FALSE)
 
+  # Rótulo de modelo para los paneles XAI (mismo término que el informe).
+  model_label <- switch(role,
+    winner_spatial_block_uniform      = "Modelo uniforme",
+    winner_spatial_block_target_group = "Modelo corregido",
+    role)
+
   # ---- SHAP ----
   X_explain <- preds |>
     dplyr::filter(class == 1) |>
@@ -120,7 +126,7 @@ explain_one_run <- function(run_id, cv_scheme, algorithm, role, env_stack,
           " n_background=", nrow(X_bg), " nsim=", SHAP_NSIM)
   shap_df <- compute_shap(model, X_explain, X_bg, nsim = SHAP_NSIM)
   imp     <- importance_from_shap(shap_df)
-  p_shap  <- plot_shap_summary(shap_df, X_explain, imp, run_id)
+  p_shap  <- plot_shap_summary(shap_df, X_explain, imp, run_id, model_label)
 
   readr::write_csv(shap_df, file.path(run_dir, "shap_values.csv"))
   readr::write_csv(imp,     file.path(run_dir, "importance_ranking.csv"))
@@ -143,7 +149,7 @@ explain_one_run <- function(run_id, cv_scheme, algorithm, role, env_stack,
   X_local    <- pts |> dplyr::select(dplyr::all_of(pred_cols))
   shap_local <- compute_shap(model, X_local, X_bg, nsim = SHAP_NSIM)
   shap_local$point_id <- pts$point_id
-  p_shap_local <- plot_shap_local_panel(shap_local, pts, run_id)
+  p_shap_local <- plot_shap_local_panel(shap_local, pts, run_id, model_label)
 
   readr::write_csv(pts |> dplyr::select(point_id, lon, lat, score,
                                         origin, class_observed),
