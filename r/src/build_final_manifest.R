@@ -60,7 +60,7 @@ build_final_manifest <- function(models_path = MODELS_MANIFEST,
       transmute(across(all_of(KEY)), has_xai = TRUE,
                 xai_role = role,
                 shap_path, shap_importance_path = importance_path,
-                pdp_png_path, lime_panel_path)
+                shap_local_panel_path)
     base <- base |>
       left_join(xai, by = KEY) |>
       mutate(has_xai = !is.na(has_xai) & has_xai)

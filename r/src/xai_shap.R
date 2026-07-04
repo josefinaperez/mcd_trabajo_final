@@ -131,3 +131,202 @@ plot_shap_summary <- function(shap_df, X_explain, importance, run_id) {
 
   (p_bar | p_bee)
 }
+
+# ============================================================
+# SHAP local: explicación por instancia sobre puntos elegidos.
+# Reutiliza compute_shap() (los valores SHAP ya son por instancia)
+# y una selección de puntos agnóstica al método.
+# ============================================================
+
+# ------------------------------------------------------------
+# select_local_points: arma 4 puntos por run para la explicación
+# local.
+#
+# Reglas:
+#   - 1 presencia del test set con score alto (top quintil)
+#   - 1 presencia del test set con score bajo (bottom quintil)
+#   - 2 puntos diagnósticos del raster (coordenadas fijas por especie)
+#
+# Args:
+#   predictions_test : data.frame con (decimalLongitude,
+#                      decimalLatitude, class, score)
+#   ds_model_ready   : data.frame con coords + predictoras
+#   env_stack        : SpatRaster con los predictores del run
+#                      (para extraer features en los puntos diagnósticos)
+#   critical_points  : tibble con (point_id, lon, lat, region)
+#   model            : modelo SDM del run, para puntuar los puntos
+#                      diagnósticos con la idoneidad del modelo
+#
+# Returns:
+#   tibble con: point_id, lon, lat, score, origin, class_observed
+#   + las columnas de predictores del run.
+# ------------------------------------------------------------
+
+select_local_points <- function(predictions_test, ds_model_ready,
+                                 env_stack, critical_points, model) {
+  pred_cols <- setdiff(names(ds_model_ready), c("class", "decimalLongitude", "decimalLatitude"))
+
+  # Join de features ANTES de samplear: una fracción de las coords de
+  # predictions_test no casa exacto contra el dataset por precisión de floats
+  # al escribir los CSV. Se arma el pool de presencias YA matcheadas (orden por
+  # score desc) y se samplea 1 alta / 1 baja de ahí.
+  pres_feat <- ds_model_ready |>
+    dplyr::rename(lon = decimalLongitude, lat = decimalLatitude) |>
+    dplyr::select(lon, lat, dplyr::all_of(pred_cols))
+
+  pres_pool <- predictions_test |>
+    dplyr::filter(class == 1) |>
+    dplyr::rename(lon = decimalLongitude, lat = decimalLatitude,
+                  class_observed = class) |>
+    dplyr::inner_join(pres_feat, by = c("lon", "lat")) |>
+    dplyr::distinct(lon, lat, .keep_all = TRUE) |>
+    dplyr::arrange(dplyr::desc(score))
+
+  n_pres <- nrow(pres_pool)
+  if (n_pres < 2) {
+    stop("select_local_points: faltan presencias con features (", n_pres, ")")
+  }
+
+  set.seed(42)
+  high_idx <- sample(seq_len(max(1, ceiling(n_pres * 0.2))), size = 1)
+  low_idx  <- sample(seq(n_pres - ceiling(n_pres * 0.2) + 1, n_pres), size = 1)
+
+  high_pres <- pres_pool[high_idx, ] |>
+    dplyr::mutate(point_id = paste0("pres_high_", dplyr::row_number()),
+                  origin   = "presencia_score_alto")
+  low_pres <- pres_pool[low_idx, ] |>
+    dplyr::mutate(point_id = paste0("pres_low_", dplyr::row_number()),
+                  origin   = "presencia_score_bajo")
+
+  pres_sel <- dplyr::bind_rows(high_pres, low_pres)
+
+  # Extraer features de los puntos diagnósticos del raster
+  crit_xy   <- as.matrix(critical_points[, c("lon", "lat")])
+  crit_vals <- terra::extract(env_stack, crit_xy)
+  crit_df <- tibble::tibble(
+    point_id       = critical_points$point_id,
+    lon            = critical_points$lon,
+    lat            = critical_points$lat,
+    score          = NA_real_,
+    origin         = paste0("raster_", critical_points$region),
+    class_observed = NA_integer_
+  ) |>
+    dplyr::bind_cols(tibble::as_tibble(crit_vals))
+
+  missing_cols <- setdiff(pred_cols, names(crit_df))
+  if (length(missing_cols) > 0) {
+    stop("select_local_points: faltan columnas tras extract: ",
+         paste(missing_cols, collapse = ", "))
+  }
+
+  # Idoneidad del modelo en los puntos diagnósticos (misma escala [0,1] que el
+  # mapa). Las presencias ya traen su score del set de prueba; los puntos
+  # diagnósticos no son presencias, así que se los puntúa con el modelo.
+  predict_fn <- make_predict_fn(model)
+  crit_ok <- stats::complete.cases(crit_df[, pred_cols, drop = FALSE])
+  if (any(crit_ok)) {
+    crit_df$score[crit_ok] <- predict_fn(
+      model, as.data.frame(crit_df[crit_ok, pred_cols, drop = FALSE]))
+  }
+
+  out <- dplyr::bind_rows(
+    pres_sel |> dplyr::select(point_id, lon, lat, score, origin,
+                              class_observed, dplyr::all_of(pred_cols)),
+    crit_df  |> dplyr::select(point_id, lon, lat, score, origin,
+                              class_observed, dplyr::all_of(pred_cols))
+  )
+
+  # Algunos puntos diagnósticos pueden caer en celdas NA del stack -> features
+  # NA que romperían el cálculo. Se descartan esos puntos (no las presencias,
+  # que vienen del join del dataset).
+  n_before <- nrow(out)
+  out <- out |>
+    dplyr::filter(!dplyr::if_any(dplyr::all_of(pred_cols), is.na))
+  n_dropped <- n_before - nrow(out)
+  if (n_dropped > 0) {
+    warning("select_local_points: ", n_dropped, " punto(s) diagnóstico(s) en celdas NA ",
+            "descartado(s) (features incompletas).")
+  }
+
+  out
+}
+
+# ------------------------------------------------------------
+# geocode_provincia: geocodifica cada punto a su provincia
+# (GADM nivel 1) para rotular los subplots con un lugar legible.
+# Si falta el shapefile o el paquete sf, devuelve NA.
+# ------------------------------------------------------------
+
+geocode_provincia <- function(meta) {
+  shp <- "data/shp/argentina/gadm41_ARG_1.shp"
+  if (!requireNamespace("sf", quietly = TRUE) || !file.exists(shp)) {
+    return(rep(NA_character_, nrow(meta)))
+  }
+  prov <- sf::st_read(shp, quiet = TRUE)
+  pts  <- sf::st_transform(
+    sf::st_as_sf(meta, coords = c("lon", "lat"), crs = 4326),
+    sf::st_crs(prov))
+  idx  <- sf::st_within(pts, prov)
+  vapply(idx, function(i) if (length(i)) prov$NAME_1[i[1]] else NA_character_,
+         character(1))
+}
+
+# ------------------------------------------------------------
+# plot_shap_local_panel: 4 subplots (2x2) de contribución SHAP
+# por predictor en cada punto. Verde = empuja a presencia
+# (SHAP > 0); rojo = empuja a fondo (SHAP < 0). Como SHAP es
+# aditivo, se muestran todos los predictores (sin recorte).
+#
+# Args:
+#   shap_local_df : tibble con una columna point_id + una columna
+#                   por predictor (valores SHAP por instancia).
+#   points        : tibble de select_local_points() (para el título).
+#   run_id        : string (no se imprime; se conserva por simetría).
+#
+# Returns:
+#   patchwork ggplot.
+# ------------------------------------------------------------
+
+plot_shap_local_panel <- function(shap_local_df, points, run_id) {
+  shap_long <- shap_local_df |>
+    tidyr::pivot_longer(-"point_id", names_to = "feature",
+                        values_to = "shap_value") |>
+    dplyr::mutate(feature = pretty_var(feature))
+
+  meta <- points |> dplyr::select(point_id, origin, score, lon, lat)
+  meta$provincia <- geocode_provincia(meta)
+
+  make_subplot <- function(pid) {
+    sub <- shap_long |> dplyr::filter(point_id == pid)
+    m   <- meta      |> dplyr::filter(point_id == pid)
+    titlestr <- if (grepl("^raster_", m$origin)) {
+      reg <- sub("^raster_", "", m$origin)
+      sc  <- if (!is.na(m$score))
+               sprintf(" (idoneidad %s)", sub("\\.", ",", sprintf("%.2f", m$score)))
+             else ""
+      sprintf("%s\npunto diagnóstico%s", reg, sc)
+    } else {
+      tipo <- if (grepl("alto", m$origin)) "bien predicha" else "mal predicha"
+      loc  <- if (!is.na(m$provincia)) m$provincia
+              else sprintf("(%.1f, %.1f)", m$lon, m$lat)
+      sprintf("%s\n%s (score %s)", loc, tipo,
+              sub("\\.", ",", sprintf("%.2f", m$score)))
+    }
+    sub |>
+      dplyr::mutate(sign = ifelse(shap_value >= 0, "presence", "background")) |>
+      ggplot(aes(x = stats::reorder(feature, shap_value),
+                 y = shap_value, fill = sign)) +
+      geom_col() +
+      coord_flip() +
+      scale_fill_manual(values = c(presence = "#2ca02c",
+                                   background = "#d62728"),
+                        guide = "none") +
+      labs(x = NULL, y = "contribución SHAP",
+           title = titlestr) +
+      theme_minimal(base_size = 11) +
+      theme(plot.title = element_text(size = 11))
+  }
+
+  plots <- lapply(points$point_id, make_subplot)
+  patchwork::wrap_plots(plots, ncol = 2)
+}

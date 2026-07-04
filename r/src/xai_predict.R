@@ -81,9 +81,8 @@ make_predict_fn <- function(model) {
 # ------------------------------------------------------------
 # predict_fn: wrapper universal retrocompatible. Resuelve el
 # algoritmo en cada llamada vía make_predict_fn, de modo que
-# los defaults `pred_fn = predict_fn` en compute_shap() y
-# compute_pdp() funcionen para cualquier algoritmo sin tocar
-# el orquestador. Firma idéntica a la histórica (maxnet).
+# el default `pred_fn = predict_fn` de compute_shap() funcione
+# para cualquier algoritmo sin tocar el orquestador.
 # ------------------------------------------------------------
 
 predict_fn <- function(object, newdata) {

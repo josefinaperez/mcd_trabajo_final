@@ -1,11 +1,11 @@
 # ============================================================
 # File: r/checks/check_predict_fn.R
-# Purpose: Chequeo de que la cadena XAI (make_predict_fn + SHAP +
-#          PDP + dispatch S3 de LIME) es agnóstica al algoritmo.
-#          Entrena modelos triviales de maxnet, ranger y xgboost
-#          sobre datos sintéticos y verifica que cada wrapper
-#          devuelve scores de presencia en [0, 1] y que SHAP/PDP/
-#          LIME corren sin tocar el orquestador.
+# Purpose: Chequeo de que la cadena XAI (make_predict_fn + SHAP
+#          global + SHAP local) es agnóstica al algoritmo. Entrena
+#          modelos triviales de maxnet, ranger y xgboost sobre datos
+#          sintéticos y verifica que cada wrapper devuelve scores de
+#          presencia en [0, 1] y que SHAP (global y local) corre sin
+#          tocar el orquestador.
 #
 # Ejecutar desde repo root:
 #   Rscript r/checks/check_predict_fn.R
@@ -19,8 +19,6 @@ suppressPackageStartupMessages({
 
 source("r/src/xai_predict.R")
 source("r/src/xai_shap.R")
-source("r/src/xai_pdp.R")
-source("r/src/xai_lime.R")
 
 set.seed(42)
 
@@ -79,16 +77,23 @@ for (algo in names(models)) {
   check(nrow(shap) == nrow(newX) && identical(sort(names(shap)), sort(preds)),
         sprintf("%s: compute_shap devuelve %d filas × %d vars", algo, nrow(newX), length(preds)))
 
-  # (4) PDP corre con el default pred_fn = predict_fn
-  pdp_df <- compute_pdp(model, X_train = X, predictors = preds, grid_resolution = 10)
-  check(all(preds %in% pdp_df$variable) && in01(pdp_df$yhat),
-        sprintf("%s: compute_pdp devuelve yhat en [0,1] para %d vars", algo, length(preds)))
-
-  # (5) Dispatch S3 de LIME: predict_model devuelve df presence/background
-  pm <- predict_model(model, newdata = newX, type = "prob")
-  check(is.data.frame(pm) && all(c("presence", "background") %in% names(pm)) &&
-          in01(pm$presence) && isTRUE(all.equal(pm$presence + pm$background, rep(1, nrow(pm)))),
-        sprintf("%s: lime predict_model -> presence+background = 1", algo))
+  # (4) SHAP local: compute_shap sobre 4 puntos + panel sin error
+  pts_local <- data.frame(
+    point_id       = paste0("p", 1:4),
+    lon            = c(-58.4, -60.5, -59.5, -67.7),
+    lat            = c(-34.6, -32.5, -35.5, -53.8),
+    score          = c(0.9, 0.2, NA, NA),
+    origin         = c("presencia_score_alto", "presencia_score_bajo",
+                       "raster_Pampa", "raster_Patagonia"),
+    class_observed = c(1L, 1L, NA, NA)
+  )
+  pts_local <- cbind(pts_local, X[1:4, , drop = FALSE])
+  shap_loc  <- compute_shap(model, X_explain = pts_local[, preds],
+                            X_background = X[1:50, ], nsim = 10)
+  shap_loc$point_id <- pts_local$point_id
+  p_local <- plot_shap_local_panel(shap_loc, pts_local, run_id = "test")
+  check(inherits(p_local, c("patchwork", "gg", "ggplot")),
+        sprintf("%s: plot_shap_local_panel devuelve un ggplot", algo))
 }
 
 cat("\n")

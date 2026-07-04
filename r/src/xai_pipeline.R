@@ -1,8 +1,8 @@
 # ============================================================
 # File: xai_pipeline.R
-# Purpose: Orquesta la Etapa 4 — corre SHAP + PDP + LIME sobre
-#          el ganador (de Etapa 3) y un modelo de contraste con
-#          corrección de sesgo. Persiste todos los artefactos
+# Purpose: Orquesta la Etapa 4 — corre SHAP global + SHAP local
+#          sobre el ganador (de Etapa 3) y un modelo de contraste
+#          con corrección de sesgo. Persiste todos los artefactos
 #          en data/outputs/sdm_xai/ y escribe manifest global.
 #          Ejecutar desde repo root.
 # ============================================================
@@ -17,8 +17,6 @@ suppressPackageStartupMessages({
 
 source("r/src/xai_predict.R")
 source("r/src/xai_shap.R")
-source("r/src/xai_pdp.R")
-source("r/src/xai_lime.R")
 source("r/src/predict_distribution_map.R")  # load_env_stack
 
 # ------------------------------------------------------------
@@ -45,8 +43,9 @@ read_xai_runs <- function(maps_root = MAPS_ROOT) {
   ws |> dplyr::transmute(run_id, cv_scheme, algorithm, role = winner_role)
 }
 
-# Puntos críticos de LIME por especie.
-LIME_CRITICAL_POINTS <- list(
+# Puntos diagnósticos por especie (coordenadas fijas) para la
+# explicación local (SHAP local).
+DIAGNOSTIC_POINTS <- list(
   polyporaceae = tibble::tribble(
     ~point_id,           ~lon,    ~lat,    ~region,
     "yungas_NOA",        -64.85, -23.65,   "Yungas (Calilegua)",
@@ -65,9 +64,6 @@ LIME_CRITICAL_POINTS <- list(
 # Hiperparámetros XAI (alineados con el spec).
 SHAP_N_BACKGROUND <- 200L
 SHAP_NSIM         <- 100L
-PDP_GRID_RES      <- 50L
-LIME_N_FEATURES   <- 5L
-LIME_N_PERMS      <- 5000L
 
 # ------------------------------------------------------------
 # Helpers
@@ -78,7 +74,7 @@ species_from_run_id <- function(run_id) {
 }
 
 # ------------------------------------------------------------
-# explain_one_run: corre SHAP + PDP + LIME para un run y
+# explain_one_run: corre SHAP global + SHAP local para un run y
 # persiste todos los artefactos en data/outputs/sdm_xai/<run_id>/.
 # Devuelve una fila del manifest.
 # ------------------------------------------------------------
@@ -131,68 +127,46 @@ explain_one_run <- function(run_id, cv_scheme, algorithm, role, env_stack,
   ggsave(file.path(run_dir, "shap_summary.png"),
          p_shap, width = 11, height = 6, dpi = 150)
 
-  # ---- PDP ----
-  message("  PDP: ", length(pred_cols), " vars × grid=", PDP_GRID_RES)
-  X_train <- ds |> dplyr::select(dplyr::all_of(pred_cols))
-  pdp_df  <- compute_pdp(model, X_train, predictors = pred_cols,
-                         grid_resolution = PDP_GRID_RES)
-  p_pdp   <- plot_pdp_grid(pdp_df, imp, run_id)
-  readr::write_csv(pdp_df, file.path(run_dir, "pdp_long.csv"))
-  ggsave(file.path(run_dir, "pdp_grid.png"),
-         p_pdp, width = 12, height = 10, dpi = 150)
-
-  # ---- LIME ----
+  # ---- SHAP local ----
+  # Los valores SHAP ya son por instancia: la explicación local reusa
+  # compute_shap() sobre los puntos elegidos (2 presencias por cuantil de score
+  # + 2 puntos diagnósticos de coordenadas fijas) con la misma referencia X_bg.
   species <- species_from_run_id(run_id)
-  if (!species %in% names(LIME_CRITICAL_POINTS)) {
-    stop("explain_one_run: faltan LIME_CRITICAL_POINTS para la especie '",
+  if (!species %in% names(DIAGNOSTIC_POINTS)) {
+    stop("explain_one_run: faltan DIAGNOSTIC_POINTS para la especie '",
          species, "'. Agregar entrada al orquestador.")
   }
-  crit <- LIME_CRITICAL_POINTS[[species]]
+  crit <- DIAGNOSTIC_POINTS[[species]]
 
-  # LIME es el XAI secundario (SHAP es el primario). Su integración con lime
-  # falla en algunos modelos (p. ej. ranger con predict_model custom -> "NAs in
-  # V(mu)" de glmnet). Se aísla en tryCatch para que una falla de LIME no tire
-  # abajo el run: SHAP + PDP igual quedan persistidos.
-  message("  LIME: seleccionando 4 puntos + explicando")
-  lime_ok <- tryCatch({
-    pts <- select_lime_points(preds, ds, env_stack, crit, model)
-    lime_df <- compute_lime(model, pts, X_train,
-                            n_features = LIME_N_FEATURES,
-                            n_permutations = LIME_N_PERMS)
-    p_lime <- plot_lime_panel(lime_df, pts, run_id)
+  message("  SHAP local: seleccionando 4 puntos + explicando")
+  pts        <- select_local_points(preds, ds, env_stack, crit, model)
+  X_local    <- pts |> dplyr::select(dplyr::all_of(pred_cols))
+  shap_local <- compute_shap(model, X_local, X_bg, nsim = SHAP_NSIM)
+  shap_local$point_id <- pts$point_id
+  p_shap_local <- plot_shap_local_panel(shap_local, pts, run_id)
 
-    readr::write_csv(pts |> dplyr::select(point_id, lon, lat, score,
-                                          origin, class_observed),
-                     file.path(run_dir, "lime_points.csv"))
-    readr::write_csv(lime_df, file.path(run_dir, "lime_weights.csv"))
-    ggsave(file.path(run_dir, "lime_panel.png"),
-           p_lime, width = 10, height = 8, dpi = 150)
-    nrow(pts)
-  }, error = function(e) {
-    warning("explain_one_run: LIME falló para ", run_id, " / ", algorithm,
-            " (", conditionMessage(e), "). Se persisten SHAP + PDP igual.")
-    NA_integer_
-  })
-
-  lime_path <- function(f) if (is.na(lime_ok)) NA_character_ else
-    normalizePath(file.path(run_dir, f), mustWork = TRUE)
+  readr::write_csv(pts |> dplyr::select(point_id, lon, lat, score,
+                                        origin, class_observed),
+                   file.path(run_dir, "shap_local_points.csv"))
+  readr::write_csv(shap_local, file.path(run_dir, "shap_local_values.csv"))
+  ggsave(file.path(run_dir, "shap_local_panel.png"),
+         p_shap_local, width = 10, height = 8, dpi = 150)
+  n_local <- nrow(pts)
 
   # ---- Manifest row ----
   tibble::tibble(
-    run_id            = run_id,
-    cv_scheme         = cv_scheme,
-    algorithm         = algorithm,
-    role              = role,
-    is_winner         = startsWith(role, "winner_"),
-    shap_path         = normalizePath(file.path(run_dir, "shap_values.csv"),         mustWork = TRUE),
-    importance_path   = normalizePath(file.path(run_dir, "importance_ranking.csv"),  mustWork = TRUE),
-    pdp_long_path     = normalizePath(file.path(run_dir, "pdp_long.csv"),            mustWork = TRUE),
-    pdp_png_path      = normalizePath(file.path(run_dir, "pdp_grid.png"),            mustWork = TRUE),
-    lime_points_path  = lime_path("lime_points.csv"),
-    lime_weights_path = lime_path("lime_weights.csv"),
-    lime_panel_path   = lime_path("lime_panel.png"),
-    n_explained_shap  = nrow(X_explain),
-    n_explained_lime  = lime_ok
+    run_id                 = run_id,
+    cv_scheme              = cv_scheme,
+    algorithm              = algorithm,
+    role                   = role,
+    is_winner              = startsWith(role, "winner_"),
+    shap_path              = normalizePath(file.path(run_dir, "shap_values.csv"),          mustWork = TRUE),
+    importance_path        = normalizePath(file.path(run_dir, "importance_ranking.csv"),   mustWork = TRUE),
+    shap_local_points_path = normalizePath(file.path(run_dir, "shap_local_points.csv"),    mustWork = TRUE),
+    shap_local_values_path = normalizePath(file.path(run_dir, "shap_local_values.csv"),    mustWork = TRUE),
+    shap_local_panel_path  = normalizePath(file.path(run_dir, "shap_local_panel.png"),     mustWork = TRUE),
+    n_explained_shap       = nrow(X_explain),
+    n_explained_shap_local = n_local
   )
 }
 
@@ -232,7 +206,7 @@ main <- function() {
 
   manifest <- rows |>
     dplyr::relocate(run_id, cv_scheme, algorithm, is_winner, role,
-                    n_explained_shap, n_explained_lime)
+                    n_explained_shap, n_explained_shap_local)
   readr::write_csv(manifest, file.path(XAI_ROOT, "manifest.csv"))
 
   message("Listo. Artefactos en ", XAI_ROOT)

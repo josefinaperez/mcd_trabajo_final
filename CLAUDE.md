@@ -38,7 +38,7 @@ source("r/src/train_pipeline.R")
 #     con los HP tuneados).
 #     Rscript r/src/tune_pipeline.R
 
-# 4) Prediction maps, XAI (SHAP/PDP/LIME) and residual spatial-autocorrelation
+# 4) Prediction maps, XAI (SHAP global + local) and residual spatial-autocorrelation
 #    diagnostics. NOTE: these must be run with `Rscript r/src/<file>.R` directly
 #    — they branch on sys.nframe() and skip the main block when source()'d.
 #    residual_autocorr_pipeline.R reads predict's winner_summary.csv, so run it
@@ -94,7 +94,7 @@ Two-layer split, **algorithm-agnostic**:
 
 **Hyperparameter tuning** (issue #8): `tune_pipeline.R` (+ pure functions in `tune_models.R`, tested by `r/checks/check_tune_models.R`) elige un único conjunto de HP por `(run_id × algo)` mediante **CV interno espacial K=3** (métrica TSS, umbral de Youden sobre el pool de folds) reusando `fit_model` / `compute_dual_metrics`. Grillas "Standard" ~12 combos/algo (maxnet `regmult × classes`; ranger `num.trees × mtry × min.node.size`, `mtry` relativo a `p`; xgboost `max_depth × learning_rate × nrounds`). Escribe `best_hp.csv` (una fila por run×algo, columnas no-aplicables en `NA`) que `train_pipeline.R` lee para pasar los HP a `fit_model` — **el tuneo reemplaza a los defaults**; si falta la fila se cae a `ALGO_DEFAULTS`. Reusa el block size global vía `spatial_cv_config.csv`, así que corre tras un `train_pipeline.R` inicial; la corrida de reporte necesita `SDM_FORCE=1` (skip content-blind). Mismas convenciones `Rscript`-directo / `sys.nframe()` / skip-if-exists+`SDM_FORCE`. La grilla completa por run×algo se persiste en `<run_id>/tune/<algo>_scores.csv` (evidencia de búsqueda).
 
-Prediction maps and explainability are separate stages: `predict_pipeline.R` (+ `predict_distribution_map.R`) and `xai_pipeline.R` (+ `xai_shap.R` / `xai_pdp.R` / `xai_lime.R`, dispatched via `xai_predict.R`). Both **must be run with `Rscript` directly** (they guard their main block on `sys.nframe()`).
+Prediction maps and explainability are separate stages: `predict_pipeline.R` (+ `predict_distribution_map.R`) and `xai_pipeline.R` (+ `xai_shap.R`, dispatched via `xai_predict.R`). XAI is **SHAP-only, leído a dos escalas**: importancia global (barras + beeswarm) y explicación local (`plot_shap_local_panel` sobre 4 puntos — 2 presencias por cuantil + 2 diagnósticos de coords fijas, elegidos por `select_local_points`). PDP y LIME se removieron (SHAP absorbe la forma funcional en el beeswarm y lo local con contribuciones aditivas). Both **must be run with `Rscript` directly** (they guard their main block on `sys.nframe()`).
 
 **Residual spatial-autocorrelation diagnostics** (issue #34): `residual_autocorr_pipeline.R` (+ pure functions in `residual_autocorrelation.R`, tested by `r/checks/check_residual_autocorrelation.R`). For each winner in `predict_pipeline`'s `winner_summary.csv`, it reads the pooled spatial-block `predictions_test.csv`, computes raw residuals (`class − score`) over all evaluation points, and runs **Moran's I** (k=8 nearest-neighbour weights, AEA projection) with a Monte-Carlo permutation p-value (`spdep::moran.mc`) plus a distance-band correlogram and a residual map. Writes `morans_i.csv`, `correlogram.csv`, `residual_map.png`, `correlogram.png` per winner and a top-level `summary.csv` under `data/outputs/sdm_residuals/`. Same `Rscript`-only / `sys.nframe()` / skip-if-exists+`SDM_FORCE` conventions; **depends on `predict_pipeline.R` having produced `winner_summary.csv`**. New CRAN dependency: `spdep`.
 

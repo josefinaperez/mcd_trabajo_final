@@ -19,15 +19,14 @@ manifest <- readr::read_csv(file.path(XAI_ROOT, "manifest.csv"),
 
 # Resumen
 
-Esta etapa interpreta las predicciones del **ganador spatial-block** seleccionado en la Etapa 3 (argmax TSS cross-algoritmo bajo k-fold espacial, tras el filtro de consistencia FNR) usando tres técnicas:
+Esta etapa interpreta las predicciones del **ganador spatial-block** seleccionado en la Etapa 3 (argmax TSS cross-algoritmo bajo k-fold espacial, tras el filtro de consistencia FNR) con **SHAP a dos escalas**:
 
-- **SHAP** (KernelSHAP) para importancia global y dirección de cada predictor.
-- **PDP** para la forma funcional de la respuesta especie-ambiente.
-- **LIME** sobre puntos locales (presencias top/bottom del score + Yungas + Patagonia) para validar consistencia local.
+- **SHAP global** (KernelSHAP) para la importancia y la dirección de cada predictor. El beeswarm, coloreado por el valor del predictor, también muestra la forma de la respuesta.
+- **SHAP local** sobre puntos individuales (presencias top/bottom del score + 2 puntos diagnósticos) para validar la consistencia local.
 
 ```{r manifest-table}
 manifest |>
-  dplyr::select(run_id, cv_scheme, role, n_explained_shap, n_explained_lime) |>
+  dplyr::select(run_id, cv_scheme, role, n_explained_shap, n_explained_shap_local) |>
   knitr::kable(caption = "Runs explicados")
 ```
 
@@ -54,14 +53,8 @@ readr::read_csv(winner_row$importance_path, show_col_types = FALSE) |>
 knitr::include_graphics(shap_summary_png(winner_row))
 ```
 
-# Partial Dependence Plots
+# SHAP local — explicaciones locales
 
-```{r pdp-winner, out.width="100%"}
-knitr::include_graphics(winner_row$pdp_png_path)
-```
-
-# LIME — explicaciones locales
-
-```{r lime-winner, out.width="100%"}
-knitr::include_graphics(winner_row$lime_panel_path)
+```{r shap-local-winner, out.width="100%"}
+knitr::include_graphics(winner_row$shap_local_panel_path)
 ```
