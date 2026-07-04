@@ -293,6 +293,20 @@ plot_shap_local_panel <- function(shap_local_df, points, run_id) {
                         values_to = "shap_value") |>
     dplyr::mutate(feature = pretty_var(feature))
 
+  # Valor de cada predictor en cada punto, para anotar la etiqueta del eje
+  # ("bio_11 = 11,5"). Se formatea a 3 cifras significativas, con coma decimal.
+  meta_cols <- c("point_id", "lon", "lat", "score", "origin", "class_observed")
+  fmt_val   <- function(v) sub("\\.", ",", trimws(formatC(v, format = "fg", digits = 3)))
+  feat_long <- points |>
+    dplyr::select(point_id, dplyr::all_of(setdiff(names(points), meta_cols))) |>
+    tidyr::pivot_longer(-"point_id", names_to = "feature",
+                        values_to = "feature_value") |>
+    dplyr::mutate(feature = pretty_var(feature))
+
+  shap_long <- shap_long |>
+    dplyr::left_join(feat_long, by = c("point_id", "feature")) |>
+    dplyr::mutate(label = paste0(feature, " = ", fmt_val(feature_value)))
+
   meta <- points |> dplyr::select(point_id, origin, score, lon, lat)
   meta$provincia <- geocode_provincia(meta)
 
@@ -314,7 +328,7 @@ plot_shap_local_panel <- function(shap_local_df, points, run_id) {
     }
     sub |>
       dplyr::mutate(sign = ifelse(shap_value >= 0, "presence", "background")) |>
-      ggplot(aes(x = stats::reorder(feature, shap_value),
+      ggplot(aes(x = stats::reorder(label, shap_value),
                  y = shap_value, fill = sign)) +
       geom_col() +
       coord_flip() +
