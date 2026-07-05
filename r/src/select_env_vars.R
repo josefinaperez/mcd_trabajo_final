@@ -68,6 +68,10 @@ compute_env_selection <- function(dataset,
 }
 
 plot_corr_heatmap <- function(cor_tidy, selected, cutoff = 0.7) {
+  clean_lab <- function(v) sub("^wc2\\.1_2\\.5m_", "", v)
+  cor_tidy$var_i <- clean_lab(cor_tidy$var_i)
+  cor_tidy$var_j <- clean_lab(cor_tidy$var_j)
+  selected <- clean_lab(selected)
   vars_order <- unique(cor_tidy$var_i)
   cor_tidy |>
     mutate(
@@ -79,15 +83,16 @@ plot_corr_heatmap <- function(cor_tidy, selected, cutoff = 0.7) {
     ) |>
     ggplot(aes(var_i, var_j, fill = r)) +
     geom_tile(color = "grey90") +
-    geom_text(aes(label = sprintf("%.2f", r),
+    geom_text(aes(label = formatC(r, format = "f", digits = 2, decimal.mark = ","),
                   fontface = ifelse(abs(r) > cutoff & var_i != var_j, "bold", "plain")),
               size = 2.4) +
     scale_fill_gradient2(low = "#2166AC", mid = "white", high = "#B2182B",
-                        midpoint = 0, limits = c(-1, 1)) +
+                        midpoint = 0, limits = c(-1, 1),
+                        labels = scales::label_number(decimal.mark = ",")) +
     coord_equal() +
     theme_minimal(base_size = 10) +
     theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
     labs(x = NULL, y = NULL,
-        title = sprintf("Correlación pairwise (Pearson) — cutoff |r| > %.2f", cutoff),
+        title = sprintf("Correlación pairwise (Pearson) — cutoff |r| > %s", formatC(cutoff, format = "f", digits = 2, decimal.mark = ",")),
         subtitle = sprintf("Conservadas: %d / %d", length(selected), length(vars_order)))
 }
